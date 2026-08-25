@@ -41,9 +41,17 @@ export default function App() {
     }
   }, [project.id]);
 
-  // Update active lyric index as playback progresses
+  // Track when last stamp occurred to prevent playback tracking from overriding active target
+  const lastStampTimestampRef = React.useRef<number>(0);
+
+  // Update active lyric index as playback progresses (only when not in active stamping)
   useEffect(() => {
     const unsubscribe = audioEngine.onTimeUpdate((currentTime) => {
+      // If user recently stamped (within 2.5s), don't override the active target line
+      if (Date.now() - lastStampTimestampRef.current < 2500) {
+        return;
+      }
+
       const lyrics = project.lyrics;
       if (!lyrics || lyrics.length === 0) return;
 
@@ -59,41 +67,62 @@ export default function App() {
   }, [project.lyrics]);
 
   // "Stamp Beat / Sync Next Line" function
-  // Sets the active lyric's start time to current playback time and advances index
+  // Sets the active lyric's start time to current playback time and automatically cascades subsequent lines
   const handleStampActiveLyric = useCallback(() => {
     const currTime = parseFloat(audioEngine.getCurrentTime().toFixed(2));
+    lastStampTimestampRef.current = Date.now();
     
     setProject((prev) => {
       if (prev.lyrics.length === 0) return prev;
       const targetIdx = Math.min(activeLyricIndex, prev.lyrics.length - 1);
       const newLyrics = [...prev.lyrics];
 
-      // Update current lyric start time
+      const currentItem = newLyrics[targetIdx];
+      const lineDuration = Math.max(2.0, (currentItem.endTime - currentItem.startTime) || 3.5);
+      const newEnd = parseFloat((currTime + lineDuration).toFixed(2));
+
+      // 1. Update current target lyric
       newLyrics[targetIdx] = {
-        ...newLyrics[targetIdx],
+        ...currentItem,
         startTime: currTime,
-        endTime: parseFloat((currTime + 3.5).toFixed(2)),
+        endTime: newEnd,
       };
 
-      // If previous line exists and its end time is past current time, clip it cleanly
-      if (targetIdx > 0 && newLyrics[targetIdx - 1].endTime > currTime) {
+      // 2. If previous line exists, cleanly clip its end time to current time
+      if (targetIdx > 0) {
         newLyrics[targetIdx - 1] = {
           ...newLyrics[targetIdx - 1],
           endTime: currTime,
         };
       }
 
+      // 3. CRITICAL: Automatically adjust the 2nd line (and all following lines)
+      // so Line 2 starts right at Line 1's end time and flows seamlessly
+      let rollingStart = newEnd;
+      for (let i = targetIdx + 1; i < newLyrics.length; i++) {
+        const nextItem = newLyrics[i];
+        const nextDuration = Math.max(2.0, (nextItem.endTime - nextItem.startTime) || 3.5);
+        const nextEnd = parseFloat((rollingStart + nextDuration).toFixed(2));
+        
+        newLyrics[i] = {
+          ...nextItem,
+          startTime: rollingStart,
+          endTime: nextEnd,
+        };
+        rollingStart = nextEnd;
+      }
+
       return {
         ...prev,
-        lyrics: sanitizeLyricTimes(newLyrics),
+        lyrics: newLyrics,
       };
     });
 
-    // Advance to next lyric line for quick continuous stamping
+    // Advance target to the next lyric line (e.g. Line 2)
     if (activeLyricIndex < project.lyrics.length - 1) {
       setActiveLyricIndex(idx => idx + 1);
     }
-  }, [activeLyricIndex, project.lyrics.length]);
+  }, [activeLyricIndex, project.lyrics]);
 
   const handleSelectState = (newProject: ProjectData) => {
     setProject(newProject);

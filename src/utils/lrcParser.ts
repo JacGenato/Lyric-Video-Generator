@@ -105,33 +105,62 @@ export function parseLyricsText(rawText: string, defaultLineDuration: number = 3
 }
 
 /**
- * Ensures end times don't overlap awkwardly and maintain minimum sensible duration
+ * Adjusts sequential lyric times so they flow naturally without overlapping
+ * and maintains sequential order.
  */
 export function sanitizeLyricTimes(lyrics: LyricItem[]): LyricItem[] {
   if (lyrics.length === 0) return [];
-  const sorted = [...lyrics].sort((a, b) => a.startTime - b.startTime);
 
-  return sorted.map((item, idx) => {
-    const nextItem = sorted[idx + 1];
+  return lyrics.map((item, idx) => {
+    const nextItem = lyrics[idx + 1];
     let endTime = item.endTime;
 
-    if (nextItem) {
+    if (nextItem && nextItem.startTime > item.startTime) {
       // If next item starts before this item's end time, clip this end time
-      if (nextItem.startTime > item.startTime) {
-        endTime = Math.min(endTime, nextItem.startTime);
-      }
+      endTime = Math.min(endTime, nextItem.startTime);
     }
 
     // Ensure minimum 0.5s duration
     if (endTime <= item.startTime) {
-      endTime = item.startTime + 2.5;
+      endTime = parseFloat((item.startTime + 2.5).toFixed(2));
     }
 
     return {
       ...item,
-      endTime,
+      startTime: Math.max(0, parseFloat(item.startTime.toFixed(2))),
+      endTime: parseFloat(endTime.toFixed(2)),
     };
   });
+}
+
+/**
+ * Cascades timings from a given line index forward so subsequent lines
+ * automatically adjust their start and end times without overlapping.
+ */
+export function cascadeLyricTimes(
+  lyrics: LyricItem[], 
+  fromIndex: number = 0, 
+  defaultLineDuration: number = 3.5
+): LyricItem[] {
+  if (lyrics.length === 0) return [];
+  const updated = [...lyrics];
+
+  for (let i = Math.max(0, fromIndex); i < updated.length; i++) {
+    const current = updated[i];
+    const duration = Math.max(1.0, current.endTime - current.startTime) || defaultLineDuration;
+    
+    if (i > 0) {
+      const prev = updated[i - 1];
+      // If current line starts before or at the same time as previous line ended,
+      // ripple it forward so it starts right when previous line ends
+      if (current.startTime < prev.endTime) {
+        current.startTime = prev.endTime;
+        current.endTime = parseFloat((current.startTime + duration).toFixed(2));
+      }
+    }
+  }
+
+  return sanitizeLyricTimes(updated);
 }
 
 /**
