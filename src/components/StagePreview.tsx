@@ -20,6 +20,7 @@ import { drawLyricFrame } from '../utils/videoRenderer';
 
 interface StagePreviewProps {
   project: ProjectData;
+  setProject?: React.Dispatch<React.SetStateAction<ProjectData>>;
   onStampActiveLyric: () => void;
   activeLyricIndex: number;
   totalLyrics: number;
@@ -27,6 +28,7 @@ interface StagePreviewProps {
 
 export const StagePreview: React.FC<StagePreviewProps> = ({
   project,
+  setProject,
   onStampActiveLyric,
   activeLyricIndex,
   totalLyrics,
@@ -324,17 +326,32 @@ export const StagePreview: React.FC<StagePreviewProps> = ({
             ))}
           </div>
 
+          {/* All Lyric Markers on Timeline */}
+          {project.lyrics.map((l, idx) => {
+            const leftPct = Math.max(0, Math.min(100, (l.startTime / (duration || 1)) * 100));
+            const isTarget = idx === activeLyricIndex;
+            return (
+              <div
+                key={l.id}
+                className={`absolute top-0 bottom-0 pointer-events-none transition-all ${
+                  isTarget ? 'w-0.5 bg-purple-400 z-10' : 'w-px bg-white/20'
+                }`}
+                style={{ left: `${leftPct}%` }}
+              />
+            );
+          })}
+
           {/* Active Lyric Section Span Indicator */}
           {project.lyrics[activeLyricIndex] && (
             <div
-              className="absolute top-0 bottom-0 bg-purple-500/15 border-x border-purple-500/50 transition-all pointer-events-none"
+              className="absolute top-0 bottom-0 bg-purple-500/20 border-x border-purple-500/60 transition-all pointer-events-none"
               style={{
                 left: `${Math.max(0, (project.lyrics[activeLyricIndex].startTime / (duration || 1)) * 100)}%`,
-                width: `${Math.max(2, (((project.lyrics[activeLyricIndex].endTime - project.lyrics[activeLyricIndex].startTime) / (duration || 1)) * 100))}%`,
+                width: `${Math.max(1.5, (((project.lyrics[activeLyricIndex].endTime - project.lyrics[activeLyricIndex].startTime) / (duration || 1)) * 100))}%`,
               }}
             >
-              <span className="absolute top-1 left-1 text-[9px] font-mono text-purple-400 font-bold uppercase truncate max-w-[80px]">
-                {project.lyrics[activeLyricIndex].section || `Line ${activeLyricIndex + 1}`}
+              <span className="absolute top-1 left-1 text-[9px] font-mono text-purple-300 font-bold uppercase truncate max-w-[90px] bg-black/60 px-1 rounded">
+                Line {activeLyricIndex + 1}
               </span>
             </div>
           )}
@@ -358,10 +375,50 @@ export const StagePreview: React.FC<StagePreviewProps> = ({
           />
         </div>
 
-        {/* Timeline Scrub Bar Time Labels */}
+        {/* Timeline Scrub Bar Time Labels & Quick Timing Snap Toolbar */}
         <div className="flex items-center justify-between text-[11px] font-mono text-white/40 px-1">
-          <span className="text-purple-400 font-semibold">{formatTime(currentTime, true)}</span>
-          <span>{formatTime(duration, true)}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-purple-400 font-semibold">{formatTime(currentTime, true)}</span>
+            {project.lyrics[activeLyricIndex] && (
+              <span className="text-white/30 hidden sm:inline">
+                • Target: {formatTime(project.lyrics[activeLyricIndex].startTime, true)} - {formatTime(project.lyrics[activeLyricIndex].endTime, true)}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {setProject && project.lyrics[activeLyricIndex] && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    const curr = parseFloat(audioEngine.getCurrentTime().toFixed(2));
+                    setProject(prev => ({
+                      ...prev,
+                      lyrics: prev.lyrics.map((l, i) => i === activeLyricIndex ? { ...l, startTime: curr } : l)
+                    }));
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-purple-600 text-[10px] text-purple-300 hover:text-white border border-white/10 font-mono transition-all"
+                  title="Snap active line start time to playhead"
+                >
+                  In=Now
+                </button>
+                <button
+                  onClick={() => {
+                    const curr = parseFloat(audioEngine.getCurrentTime().toFixed(2));
+                    setProject(prev => ({
+                      ...prev,
+                      lyrics: prev.lyrics.map((l, i) => i === activeLyricIndex ? { ...l, endTime: Math.max(l.startTime + 0.5, curr) } : l)
+                    }));
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-purple-600 text-[10px] text-purple-300 hover:text-white border border-white/10 font-mono transition-all"
+                  title="Snap active line end time to playhead"
+                >
+                  Out=Now
+                </button>
+              </div>
+            )}
+            <span>{formatTime(duration, true)}</span>
+          </div>
         </div>
 
         {/* Playback Controls & Utility Row */}

@@ -12,19 +12,34 @@ import { LyricsEditor } from './components/LyricsEditor';
 import { MediaSettings } from './components/MediaSettings';
 import { StyleAndEffects } from './components/StyleAndEffects';
 import { ExportModal } from './components/ExportModal';
+import { StateManagerModal } from './components/StateManagerModal';
 import { audioEngine } from './utils/audioEngine';
 import { sanitizeLyricTimes } from './utils/lrcParser';
+import { getSavedStates, getActiveStateId, saveState } from './utils/stateStorage';
 
 export default function App() {
-  const [project, setProject] = useState<ProjectData>(SAMPLE_PROJECTS.tanging_handog);
+  const [project, setProject] = useState<ProjectData>(() => {
+    // Try to load initial saved state
+    const savedStates = getSavedStates();
+    const activeId = getActiveStateId();
+    if (activeId) {
+      const match = savedStates.find(s => s.id === activeId);
+      if (match) return match.project;
+    }
+    return savedStates[0]?.project || SAMPLE_PROJECTS.tanging_handog;
+  });
+
   const [activeTab, setActiveTab] = useState<'editor' | 'media' | 'style'>('editor');
   const [activeLyricIndex, setActiveLyricIndex] = useState<number>(0);
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [isStateManagerOpen, setIsStateManagerOpen] = useState<boolean>(false);
 
-  // Initialize sample synth audio on mount
+  // Initialize synth audio whenever project audio changes or mounts
   useEffect(() => {
-    audioEngine.loadSampleTrack('acoustic', project.audio.duration || 38);
-  }, []);
+    if (!project.audio.fileUrl) {
+      audioEngine.loadSampleTrack('acoustic', project.audio.duration || 38);
+    }
+  }, [project.id]);
 
   // Update active lyric index as playback progresses
   useEffect(() => {
@@ -80,6 +95,12 @@ export default function App() {
     }
   }, [activeLyricIndex, project.lyrics.length]);
 
+  const handleSelectState = (newProject: ProjectData) => {
+    setProject(newProject);
+    setActiveLyricIndex(0);
+    audioEngine.seek(0);
+  };
+
   return (
     <div className="min-h-screen bg-[#0F0F12] text-white flex flex-col font-sans selection:bg-purple-500 selection:text-white">
       {/* Top Studio Header & Actions */}
@@ -87,6 +108,7 @@ export default function App() {
         project={project}
         setProject={setProject}
         onOpenExportModal={() => setIsExportModalOpen(true)}
+        onOpenStateManager={() => setIsStateManagerOpen(true)}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
       />
@@ -97,6 +119,7 @@ export default function App() {
         <div className="lg:col-span-6 xl:col-span-7 flex flex-col gap-4 sticky top-16">
           <StagePreview
             project={project}
+            setProject={setProject}
             onStampActiveLyric={handleStampActiveLyric}
             activeLyricIndex={activeLyricIndex}
             totalLyrics={project.lyrics.length}
@@ -130,6 +153,14 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* State Manager Modal (New State, Save Snapshots, Switch Versions) */}
+      <StateManagerModal
+        isOpen={isStateManagerOpen}
+        onClose={() => setIsStateManagerOpen(false)}
+        currentProject={project}
+        onSelectState={handleSelectState}
+      />
 
       {/* Export Video Modal */}
       <ExportModal
