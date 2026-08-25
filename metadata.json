@@ -1,0 +1,6 @@
+{
+  "name": "Lyric Video Generator",
+  "description": "Create, sync, style, preview, and export high-quality lyric videos with audio waveforms, background video/images, kinetic text animations, and synchronized lyrics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
