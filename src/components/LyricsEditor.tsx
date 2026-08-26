@@ -55,10 +55,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({
   useEffect(() => {
     if (editorMode === 'bulk') {
       const formatted = project.lyrics
-        .map(item => {
-          const sectionPrefix = item.section ? `[${item.section}]\n` : '';
-          return `${sectionPrefix}${item.text}`;
-        })
+        .map(item => item.text)
         .join('\n');
       setBulkText(formatted);
     }
@@ -717,20 +714,6 @@ Kundi ang taong Diyos ang pinagmulan`;
                             >
                               <Play className="w-3 h-3 fill-current" />
                             </button>
-                          </div>
-
-                          {/* Section Selector */}
-                          <div className="relative" onClick={(e) => e.stopPropagation()}>
-                            <select
-                              value={item.section || ''}
-                              onChange={(e) => handleUpdateLine(item.id, { section: e.target.value || undefined })}
-                              className="bg-black/40 border border-white/10 text-[10px] uppercase font-bold text-white/50 hover:text-purple-300 px-1.5 py-0.5 rounded outline-none cursor-pointer"
-                            >
-                              <option value="" className="bg-[#16161D] text-white">No Tag</option>
-                              {sectionTags.map(tag => (
-                                <option key={tag} value={tag} className="bg-[#16161D] text-white">{tag}</option>
-                              ))}
-                            </select>
                           </div>
 
                           {/* Editable Lyric Text */}

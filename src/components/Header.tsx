@@ -13,7 +13,8 @@ import {
   Music2,
   Plus,
   Bookmark,
-  FolderOpen
+  FolderOpen,
+  Film
 } from 'lucide-react';
 import { AspectRatio, ProjectData, Resolution } from '../types';
 import { SAMPLE_PROJECTS } from '../utils/sampleData';
@@ -25,8 +26,8 @@ interface HeaderProps {
   setProject: React.Dispatch<React.SetStateAction<ProjectData>>;
   onOpenExportModal: () => void;
   onOpenStateManager: () => void;
-  activeTab: 'editor' | 'media' | 'style';
-  setActiveTab: (tab: 'editor' | 'media' | 'style') => void;
+  activeTab: 'editor' | 'title' | 'media' | 'style';
+  setActiveTab: (tab: 'editor' | 'title' | 'media' | 'style') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -235,6 +236,18 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Lyrics & Sync</span>
             </button>
             <button
+              id="tab-title-editor"
+              onClick={() => setActiveTab('title')}
+              className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 text-xs ${
+                activeTab === 'title'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                  : 'text-white/60 hover:text-white hover:bg-white/5 border border-transparent'
+              }`}
+            >
+              <Film className="w-3.5 h-3.5 text-purple-400" />
+              <span>Title Intro</span>
+            </button>
+            <button
               id="tab-media-settings"
               onClick={() => setActiveTab('media')}
               className={`px-3 py-1 rounded-md font-medium transition-all flex items-center gap-1.5 text-xs ${
@@ -244,7 +257,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Media Assets</span>
+              <span>Media</span>
             </button>
             <button
               id="tab-style-settings"
@@ -256,7 +269,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              <span>Text & Effects</span>
+              <span>Style & FX</span>
             </button>
           </div>
         </div>

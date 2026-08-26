@@ -90,12 +90,26 @@ export interface AudioSettings {
   audioBuffer?: AudioBuffer | null;
 }
 
+export interface IntroTitleSettings {
+  enabled: boolean;
+  title: string;
+  artist: string;
+  subtitle: string;
+  duration: number; // in seconds (1.0 - 8.0)
+  theme: 'cinematic' | 'minimal' | 'neon' | 'bold-center' | 'vintage';
+  animation: 'fade' | 'zoom' | 'slide-up' | 'blur';
+  textColor: string;
+  accentColor: string;
+  fontSizeMultiplier: number;
+}
+
 export interface ProjectData {
   id: string;
   title: string;
   artist: string;
   aspectRatio: AspectRatio;
   resolution: Resolution;
+  introTitle?: IntroTitleSettings;
   background: BackgroundSettings;
   font: FontSettings;
   animation: AnimationSettings;

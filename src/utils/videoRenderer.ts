@@ -146,8 +146,207 @@ export function drawLyricFrame(
     drawVisualizer(ctx, width, height, vizType, frequencyData, project.animation.visualizerColor || '#f59e0b', project.animation.visualizerPosition);
   }
 
-  // 6. Draw Lyrics
+  // 6. Draw Title Card at Start of Video (if active)
+  drawIntroTitleCard(ctx, width, height, currentTime, project);
+
+  // 7. Draw Lyrics
   drawActiveLyrics(ctx, width, height, currentTime, project);
+}
+
+function drawIntroTitleCard(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  currentTime: number,
+  project: ProjectData
+) {
+  const intro = project.introTitle;
+  // If disabled explicitly, skip
+  if (intro && intro.enabled === false) return;
+
+  const duration = intro?.duration ?? 3.5;
+  if (currentTime > duration) return;
+
+  const titleText = (intro?.title || project.title || 'Untitled Track').trim();
+  const artistText = (intro?.artist || project.artist || '').trim();
+  const subtitleText = (intro?.subtitle ?? 'OFFICIAL LYRIC VIDEO').trim();
+  const theme = intro?.theme || 'cinematic';
+  const animation = intro?.animation || 'fade';
+  const textColor = intro?.textColor || '#ffffff';
+  const accentColor = intro?.accentColor || project.font.accentColor || '#f59e0b';
+  const fontMultiplier = intro?.fontSizeMultiplier || 1.0;
+
+  // Calculate smooth fade in (0 to 0.5s) and fade out (last 0.6s)
+  const fadeInDuration = 0.5;
+  const fadeOutDuration = 0.6;
+  const inAlpha = Math.max(0, Math.min(1, currentTime / fadeInDuration));
+  const outAlpha = Math.max(0, Math.min(1, (duration - currentTime) / fadeOutDuration));
+  const alpha = Math.min(inAlpha, outAlpha);
+
+  if (alpha <= 0.001) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Calculate animation transforms
+  let scale = 1.0;
+  let offsetY = 0;
+
+  if (animation === 'zoom') {
+    scale = 0.94 + (currentTime / duration) * 0.08;
+  } else if (animation === 'slide-up') {
+    offsetY = (1 - inAlpha) * (height * 0.04);
+  }
+
+  const centerY = height * 0.48 + offsetY;
+  const baseTitleSize = Math.floor((width * 0.052) * fontMultiplier);
+  const baseSubtitleSize = Math.max(12, Math.floor(baseTitleSize * 0.35));
+  const baseArtistSize = Math.max(14, Math.floor(baseTitleSize * 0.42));
+
+  // Determine font family
+  const titleFontFamily = project.font.fontFamily || "'Playfair Display', serif";
+
+  if (theme === 'cinematic') {
+    // Cinematic theme: Centered title with letterspaced subtitle & accent divider
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Subtitle / Tag above
+    if (subtitleText) {
+      ctx.font = `700 ${baseSubtitleSize}px 'Plus Jakarta Sans', sans-serif`;
+      ctx.fillStyle = accentColor;
+      ctx.shadowColor = accentColor;
+      ctx.shadowBlur = 10;
+      ctx.fillText(`• ${subtitleText.toUpperCase()} •`, width / 2, centerY - baseTitleSize * 1.1);
+    }
+
+    // Main Title
+    ctx.font = `bold ${Math.floor(baseTitleSize * scale)}px ${titleFontFamily}`;
+    ctx.fillStyle = textColor;
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 4;
+    ctx.fillText(titleText, width / 2, centerY);
+
+    // Accent Divider line
+    const dividerWidth = Math.min(width * 0.35, ctx.measureText(titleText).width * 0.8 + 40);
+    ctx.beginPath();
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 2 * (width / 1000);
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 8;
+    ctx.moveTo((width - dividerWidth) / 2, centerY + baseTitleSize * 0.7);
+    ctx.lineTo((width + dividerWidth) / 2, centerY + baseTitleSize * 0.7);
+    ctx.stroke();
+
+    // Artist below
+    if (artistText) {
+      ctx.font = `500 ${baseArtistSize}px 'Plus Jakarta Sans', sans-serif`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.shadowColor = '#000000';
+      ctx.shadowBlur = 10;
+      ctx.fillText(artistText, width / 2, centerY + baseTitleSize * 1.25);
+    }
+  } else if (theme === 'minimal') {
+    // Minimal theme: Modern clean badge box
+    const cardWidth = Math.min(width * 0.75, width * 0.65);
+    const cardHeight = baseTitleSize * 2.8;
+    const cardX = (width - cardWidth) / 2;
+    const cardY = centerY - cardHeight / 2;
+
+    // Glass backdrop
+    ctx.fillStyle = 'rgba(15, 15, 20, 0.75)';
+    ctx.beginPath();
+    ctx.roundRect(cardX, cardY, cardWidth, cardHeight, 16 * (width / 1000));
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Main Title
+    ctx.font = `700 ${Math.floor(baseTitleSize * 0.9 * scale)}px 'Plus Jakarta Sans', sans-serif`;
+    ctx.fillStyle = textColor;
+    ctx.fillText(titleText, width / 2, centerY - baseTitleSize * 0.25);
+
+    // Artist & Subtitle
+    ctx.font = `500 ${baseSubtitleSize}px 'Plus Jakarta Sans', sans-serif`;
+    ctx.fillStyle = accentColor;
+    const infoText = [artistText, subtitleText].filter(Boolean).join('  •  ');
+    ctx.fillText(infoText, width / 2, centerY + baseTitleSize * 0.55);
+  } else if (theme === 'neon') {
+    // Neon theme: Glowing electric title card
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (subtitleText) {
+      ctx.font = `800 ${baseSubtitleSize}px 'Syne', sans-serif`;
+      ctx.fillStyle = accentColor;
+      ctx.shadowColor = accentColor;
+      ctx.shadowBlur = 15;
+      ctx.fillText(`[ ${subtitleText.toUpperCase()} ]`, width / 2, centerY - baseTitleSize * 1.05);
+    }
+
+    ctx.font = `900 ${Math.floor(baseTitleSize * scale)}px 'Syne', sans-serif`;
+    ctx.fillStyle = textColor;
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 25;
+    ctx.fillText(titleText.toUpperCase(), width / 2, centerY);
+
+    if (artistText) {
+      ctx.font = `700 ${baseArtistSize}px 'Syne', sans-serif`;
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = accentColor;
+      ctx.shadowBlur = 12;
+      ctx.fillText(`PRODUCED BY ${artistText.toUpperCase()}`, width / 2, centerY + baseTitleSize * 1.05);
+    }
+  } else if (theme === 'bold-center') {
+    // Bold-center theme: Massive high-impact punchy typography
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.font = `900 ${Math.floor(baseTitleSize * 1.25 * scale)}px 'Oswald', sans-serif`;
+    ctx.fillStyle = textColor;
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 4 * (width / 1000);
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 20;
+    ctx.strokeText(titleText.toUpperCase(), width / 2, centerY);
+    ctx.fillText(titleText.toUpperCase(), width / 2, centerY);
+
+    if (artistText) {
+      ctx.font = `700 ${baseArtistSize}px 'Plus Jakarta Sans', sans-serif`;
+      ctx.fillStyle = accentColor;
+      ctx.shadowColor = accentColor;
+      ctx.shadowBlur = 8;
+      ctx.fillText(artistText.toUpperCase(), width / 2, centerY + baseTitleSize * 1.1);
+    }
+  } else {
+    // Vintage / Poetic theme
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.font = `italic 400 ${baseSubtitleSize}px 'Playfair Display', serif`;
+    ctx.fillStyle = accentColor;
+    ctx.fillText('✦  ✦  ✦', width / 2, centerY - baseTitleSize * 1.0);
+
+    ctx.font = `700 ${Math.floor(baseTitleSize * scale)}px 'Playfair Display', serif`;
+    ctx.fillStyle = textColor;
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 14;
+    ctx.fillText(titleText, width / 2, centerY);
+
+    if (artistText) {
+      ctx.font = `italic 500 ${baseArtistSize}px 'Playfair Display', serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(`by ${artistText}`, width / 2, centerY + baseTitleSize * 1.05);
+    }
+  }
+
+  ctx.restore();
 }
 
 function drawVisualizer(
@@ -357,16 +556,6 @@ function drawActiveLyrics(
 
     ctx.save();
 
-    // Section Tag Display (e.g. [Chorus])
-    if (item.section && isCurrent) {
-      ctx.save();
-      ctx.font = `600 ${Math.floor(baseSize * 0.42)}px ${fontFam}`;
-      ctx.fillStyle = font.accentColor || '#f59e0b';
-      ctx.textAlign = 'center';
-      ctx.fillText(`• ${item.section.toUpperCase()} •`, width / 2, y - baseSize * 0.9);
-      ctx.restore();
-    }
-
     // Animation entry calculation
     const timeSinceStart = currentTime - item.startTime;
     const progress = Math.max(0, Math.min(1, timeSinceStart / Math.max(0.1, animation.duration)));
@@ -497,7 +686,8 @@ export async function renderAndExportVideo(
   canvasHeight: number,
   onProgress: (info: RenderProgress) => void,
   cancelSignal: { cancelled: boolean },
-  customDuration?: number
+  customDuration?: number,
+  preferredFormat: 'mp4' | 'webm' = 'mp4'
 ): Promise<Blob> {
   // Determine duration
   let duration = customDuration || project.audio.duration || 30;
@@ -561,16 +751,29 @@ export async function renderAndExportVideo(
     console.warn('Audio stream attach warning:', err);
   }
 
-  // Pick supported mime type
-  const candidateMimes = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=h264,opus',
-    'video/webm',
-    'video/mp4;codecs=avc1,mp4a.40.2',
-    'video/mp4',
-    '',
-  ];
+  // Pick supported mime type based on preferred format
+  const candidateMimes = preferredFormat === 'mp4'
+    ? [
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=h264,aac',
+        'video/mp4;codecs=avc1',
+        'video/mp4',
+        'video/webm;codecs=h264,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+        '',
+      ]
+    : [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=h264,opus',
+        'video/webm',
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4',
+        '',
+      ];
 
   let chosenMime = '';
   for (const m of candidateMimes) {

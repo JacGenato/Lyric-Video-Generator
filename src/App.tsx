@@ -9,6 +9,7 @@ import { SAMPLE_PROJECTS } from './utils/sampleData';
 import { Header } from './components/Header';
 import { StagePreview } from './components/StagePreview';
 import { LyricsEditor } from './components/LyricsEditor';
+import { TitleEditor } from './components/TitleEditor';
 import { MediaSettings } from './components/MediaSettings';
 import { StyleAndEffects } from './components/StyleAndEffects';
 import { ExportModal } from './components/ExportModal';
@@ -29,7 +30,7 @@ export default function App() {
     return savedStates[0]?.project || SAMPLE_PROJECTS.tanging_handog;
   });
 
-  const [activeTab, setActiveTab] = useState<'editor' | 'media' | 'style'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'title' | 'media' | 'style'>('editor');
   const [activeLyricIndex, setActiveLyricIndex] = useState<number>(0);
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [isStateManagerOpen, setIsStateManagerOpen] = useState<boolean>(false);
@@ -164,6 +165,13 @@ export default function App() {
               activeLyricIndex={activeLyricIndex}
               setActiveLyricIndex={setActiveLyricIndex}
               onStampActiveLyric={handleStampActiveLyric}
+            />
+          )}
+
+          {activeTab === 'title' && (
+            <TitleEditor
+              project={project}
+              setProject={setProject}
             />
           )}
 

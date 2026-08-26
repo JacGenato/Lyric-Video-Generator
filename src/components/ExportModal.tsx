@@ -31,7 +31,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [exportedVideoUrl, setExportedVideoUrl] = useState<string | null>(null);
-  const [exportedBlobType, setExportedBlobType] = useState<string>('video/webm');
+  const [exportedBlobType, setExportedBlobType] = useState<string>('video/mp4');
+  const [selectedFormat, setSelectedFormat] = useState<'mp4' | 'webm'>('mp4');
   const [selectedResolution, setSelectedResolution] = useState<'1080p' | '720p'>('720p');
   const [exportRange, setExportRange] = useState<'full' | '15s' | '30s'>('full');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -79,12 +80,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           setRenderProgress(progress);
         },
         cancelSignalRef.current,
-        effectiveExportDuration
+        effectiveExportDuration,
+        selectedFormat
       );
 
       const url = URL.createObjectURL(blob);
       setExportedVideoUrl(url);
-      setExportedBlobType(blob.type || 'video/webm');
+      setExportedBlobType(blob.type || (selectedFormat === 'mp4' ? 'video/mp4' : 'video/webm'));
       setIsExporting(false);
 
       // Trigger celebratory confetti
@@ -114,7 +116,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     if (!exportedVideoUrl) return;
     const a = document.createElement('a');
     a.href = exportedVideoUrl;
-    const isMp4 = exportedBlobType.includes('mp4');
+    const isMp4 = selectedFormat === 'mp4' || exportedBlobType.includes('mp4');
     const ext = isMp4 ? 'mp4' : 'webm';
     const safeTitle = (project.title || 'lyric_video').toLowerCase().replace(/[^a-z0-9]/g, '_');
     a.download = `${safeTitle}_${project.aspectRatio.replace(':', '_')}.${ext}`;
@@ -230,6 +232,42 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     }`}
                   >
                     30s Teaser
+                  </button>
+                </div>
+              </div>
+
+              {/* Format & Container Picker */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-white/70 block">Target Video Format</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setSelectedFormat('mp4')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      selectedFormat === 'mp4'
+                        ? 'bg-purple-500/10 border-purple-500 ring-1 ring-purple-500/50 shadow-md shadow-purple-500/20'
+                        : 'bg-black/30 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-white flex items-center justify-between">
+                      <span>MP4 Video (.mp4)</span>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">Standard</span>
+                    </div>
+                    <p className="text-[10px] text-white/40 mt-0.5">Universal playback for all phones, social apps & editors</p>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedFormat('webm')}
+                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                      selectedFormat === 'webm'
+                        ? 'bg-purple-500/10 border-purple-500 ring-1 ring-purple-500/50 shadow-md shadow-purple-500/20'
+                        : 'bg-black/30 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-white flex items-center justify-between">
+                      <span>WebM Video (.webm)</span>
+                      <span className="text-[10px] bg-white/10 text-white/40 px-1.5 py-0.5 rounded font-mono">Web</span>
+                    </div>
+                    <p className="text-[10px] text-white/40 mt-0.5">Fast browser-native format</p>
                   </button>
                 </div>
               </div>
