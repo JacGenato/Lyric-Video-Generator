@@ -460,15 +460,15 @@ function drawActiveLyrics(
   currentTime: number,
   project: ProjectData
 ) {
-  // If intro title card is active on screen, remove/hide lyrics so title card takes full focus
-  if (isIntroTitleActive(project, currentTime)) {
-    return;
-  }
-
   const { font, animation, lyrics } = project;
   if (!lyrics || lyrics.length === 0) return;
 
   const sorted = [...lyrics].sort((a, b) => a.startTime - b.startTime);
+
+  // If intro title is active AND song hasn't reached the first lyric line yet, let intro card take sole focus
+  if (isIntroTitleActive(project, currentTime) && sorted.length > 0 && currentTime < sorted[0].startTime) {
+    return;
+  }
 
   // Find active lyric index
   let activeIndex = -1;
@@ -707,10 +707,14 @@ export async function renderAndExportVideo(
   customDuration?: number,
   preferredFormat: 'mp4' | 'webm' = 'mp4'
 ): Promise<Blob> {
-  // Determine duration
-  let duration = customDuration || project.audio.duration || 30;
+  // Determine duration from customDuration, audio duration, or maximum lyric timestamp
+  const maxLyricEndTime = project.lyrics && project.lyrics.length > 0
+    ? Math.max(...project.lyrics.map(l => l.endTime || 0))
+    : 0;
+
+  let duration = customDuration || project.audio.duration || (maxLyricEndTime > 0 ? maxLyricEndTime + 2 : 30);
   if (!duration || duration <= 0 || isNaN(duration)) {
-    duration = 30;
+    duration = maxLyricEndTime > 0 ? maxLyricEndTime + 2 : 30;
   }
   
   const fps = 30;
@@ -960,11 +964,11 @@ export async function renderAndExportVideo(
         return reject(new Error('Export was cancelled by user.'));
       }
 
-      // Calculate currentTime reliably using elapsed wall-clock, audio engine time, and frame step
+      // Calculate currentTime reliably using elapsed wall-clock and audio engine time
       const elapsed = (performance.now() - renderStartTime) / 1000;
       const audioTime = audioEngine.getCurrentTime();
-      const frameTime = frame / fps;
-      const currentTime = Math.min(duration, Math.max(audioTime, elapsed, frameTime));
+      // Match StagePreview playback time precisely
+      const currentTime = Math.min(duration, Math.max(0, audioTime > 0.02 ? audioTime : elapsed));
       const progress = Math.min(0.99, currentTime / duration);
 
       // Update particles
@@ -988,7 +992,8 @@ export async function renderAndExportVideo(
         status: 'rendering',
       });
 
-      if (currentTime >= duration || elapsed >= duration || frame >= totalFrames) {
+      // Complete when we have reached full song duration
+      if (currentTime >= duration || elapsed >= duration) {
         stopRecordingCleanly();
       } else {
         requestAnimationFrame(renderLoop);

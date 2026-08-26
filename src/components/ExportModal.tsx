@@ -41,7 +41,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const totalAudioDuration = project.audio.duration || 38;
+  const maxLyricEndTime = project.lyrics && project.lyrics.length > 0
+    ? Math.max(...project.lyrics.map(l => l.endTime || 0))
+    : 0;
+  const totalAudioDuration = Math.max(
+    project.audio.duration || 0,
+    maxLyricEndTime > 0 ? Math.ceil(maxLyricEndTime + 2) : 0,
+    30
+  );
   const effectiveExportDuration = 
     exportRange === '15s' 
       ? Math.min(15, totalAudioDuration) 
