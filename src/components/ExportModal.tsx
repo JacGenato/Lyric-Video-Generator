@@ -31,12 +31,22 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [exportedVideoUrl, setExportedVideoUrl] = useState<string | null>(null);
-  const [selectedResolution, setSelectedResolution] = useState<'1080p' | '720p'>('1080p');
+  const [exportedBlobType, setExportedBlobType] = useState<string>('video/webm');
+  const [selectedResolution, setSelectedResolution] = useState<'1080p' | '720p'>('720p');
+  const [exportRange, setExportRange] = useState<'full' | '15s' | '30s'>('full');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const cancelSignalRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   if (!isOpen) return null;
+
+  const totalAudioDuration = project.audio.duration || 38;
+  const effectiveExportDuration = 
+    exportRange === '15s' 
+      ? Math.min(15, totalAudioDuration) 
+      : exportRange === '30s' 
+        ? Math.min(30, totalAudioDuration) 
+        : totalAudioDuration;
 
   const handleStartExport = async () => {
     setIsExporting(true);
@@ -45,8 +55,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     cancelSignalRef.current = { cancelled: false };
 
     // Calculate dimensions
-    let width = 1920;
-    let height = 1080;
+    let width = 1280;
+    let height = 720;
 
     if (project.aspectRatio === '9:16') {
       width = selectedResolution === '1080p' ? 1080 : 720;
@@ -68,28 +78,28 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         (progress) => {
           setRenderProgress(progress);
         },
-        cancelSignalRef.current
+        cancelSignalRef.current,
+        effectiveExportDuration
       );
 
       const url = URL.createObjectURL(blob);
       setExportedVideoUrl(url);
+      setExportedBlobType(blob.type || 'video/webm');
       setIsExporting(false);
 
-      // Trigger celebratory confetti!
+      // Trigger celebratory confetti
       try {
         confetti({
           particleCount: 80,
           spread: 70,
           origin: { y: 0.6 },
         });
-      } catch {
-        // Confetti fallback
-      }
+      } catch {}
     } catch (err: any) {
       if (cancelSignalRef.current.cancelled) {
         setIsExporting(false);
       } else {
-        setErrorMsg(err?.message || 'Export failed during rendering.');
+        setErrorMsg(err?.message || 'Export failed during rendering. Please try 720p or a shorter clip.');
         setIsExporting(false);
       }
     }
@@ -104,8 +114,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     if (!exportedVideoUrl) return;
     const a = document.createElement('a');
     a.href = exportedVideoUrl;
+    const isMp4 = exportedBlobType.includes('mp4');
+    const ext = isMp4 ? 'mp4' : 'webm';
     const safeTitle = (project.title || 'lyric_video').toLowerCase().replace(/[^a-z0-9]/g, '_');
-    a.download = `${safeTitle}_${project.aspectRatio.replace(':', '_')}.webm`;
+    a.download = `${safeTitle}_${project.aspectRatio.replace(':', '_')}.${ext}`;
     a.click();
   };
 
@@ -142,7 +154,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
             <div>
               <h2 className="font-bold text-sm text-white tracking-tight">Export Lyric Video</h2>
-              <p className="text-[11px] text-white/40">Generate high-fidelity synchronized MP4/WebM video</p>
+              <p className="text-[11px] text-white/40">Render synchronized video with animated typography</p>
             </div>
           </div>
           {!isExporting && (
@@ -174,9 +186,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   <span className="text-xs font-bold text-white/90">{project.aspectRatio}</span>
                 </div>
                 <div className="bg-black/30 border border-white/10 p-2.5 rounded-lg">
-                  <span className="text-[10px] uppercase font-bold text-white/40 block">Duration</span>
+                  <span className="text-[10px] uppercase font-bold text-white/40 block">Render Length</span>
                   <span className="text-xs font-bold text-purple-400 font-mono">
-                    {formatTime(project.audio.duration || 38, false)}
+                    {formatTime(effectiveExportDuration, false)}
                   </span>
                 </div>
                 <div className="bg-black/30 border border-white/10 p-2.5 rounded-lg">
@@ -185,25 +197,47 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 </div>
               </div>
 
+              {/* Clip Length Selector */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-white/70 block">Export Length</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setExportRange('full')}
+                    className={`py-2 px-2 rounded-lg border text-center text-xs transition-all cursor-pointer ${
+                      exportRange === 'full'
+                        ? 'bg-purple-500/15 border-purple-500 text-purple-200 font-semibold'
+                        : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                    }`}
+                  >
+                    Full Song ({formatTime(totalAudioDuration, false)})
+                  </button>
+                  <button
+                    onClick={() => setExportRange('15s')}
+                    className={`py-2 px-2 rounded-lg border text-center text-xs transition-all cursor-pointer ${
+                      exportRange === '15s'
+                        ? 'bg-purple-500/15 border-purple-500 text-purple-200 font-semibold'
+                        : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                    }`}
+                  >
+                    ⚡ Quick 15s Short
+                  </button>
+                  <button
+                    onClick={() => setExportRange('30s')}
+                    className={`py-2 px-2 rounded-lg border text-center text-xs transition-all cursor-pointer ${
+                      exportRange === '30s'
+                        ? 'bg-purple-500/15 border-purple-500 text-purple-200 font-semibold'
+                        : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                    }`}
+                  >
+                    30s Teaser
+                  </button>
+                </div>
+              </div>
+
               {/* Resolution Picker */}
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-white/70 block">Output Quality & Resolution</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setSelectedResolution('1080p')}
-                    className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
-                      selectedResolution === '1080p'
-                        ? 'bg-purple-500/10 border-purple-500 ring-1 ring-purple-500/50 shadow-md shadow-purple-500/20'
-                        : 'bg-black/30 border-white/10 hover:border-white/20'
-                    }`}
-                  >
-                    <div className="text-xs font-bold text-white flex items-center justify-between">
-                      <span>1080p Full HD</span>
-                      <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-mono">Best</span>
-                    </div>
-                    <p className="text-[11px] text-white/40 mt-1">Crisp for YouTube & Instagram</p>
-                  </button>
-
                   <button
                     onClick={() => setSelectedResolution('720p')}
                     className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
@@ -214,22 +248,37 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   >
                     <div className="text-xs font-bold text-white flex items-center justify-between">
                       <span>720p HD</span>
-                      <span className="text-[10px] bg-white/10 text-white/40 px-1.5 py-0.5 rounded font-mono">Fast</span>
+                      <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded font-mono">Recommended</span>
                     </div>
-                    <p className="text-[11px] text-white/40 mt-1">Faster render & smaller file</p>
+                    <p className="text-[11px] text-white/40 mt-1">Super smooth render & optimal file size</p>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedResolution('1080p')}
+                    className={`p-3 rounded-lg border text-left transition-all cursor-pointer ${
+                      selectedResolution === '1080p'
+                        ? 'bg-purple-500/10 border-purple-500 ring-1 ring-purple-500/50 shadow-md shadow-purple-500/20'
+                        : 'bg-black/30 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-white flex items-center justify-between">
+                      <span>1080p Full HD</span>
+                      <span className="text-[10px] bg-white/10 text-white/40 px-1.5 py-0.5 rounded font-mono">Cinema</span>
+                    </div>
+                    <p className="text-[11px] text-white/40 mt-1">Maximum resolution for YouTube & big screens</p>
                   </button>
                 </div>
               </div>
 
               <div className="bg-black/30 border border-white/10 rounded-lg p-3 text-xs text-white/50 leading-relaxed">
-                🚀 The video will render in real-time with your selected animated text effects, reactive audio visualizer, and synchronized background.
+                🚀 The video will render with your chosen kinetic typography, reactive audio visualizer, and synchronized background.
               </div>
             </div>
           )}
 
           {/* State 2: Live Export in Progress */}
           {isExporting && (
-            <div className="space-y-4 py-2 text-center animate-in fade-in">
+            <div className="space-y-4 py-4 text-center animate-in fade-in">
               <div className="relative w-16 h-16 mx-auto flex items-center justify-center">
                 <Loader2 className="w-12 h-12 text-purple-500 animate-spin" />
                 <span className="absolute font-mono text-xs font-bold text-white">
@@ -239,10 +288,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  {renderProgress?.status === 'encoding' ? 'Finalizing Video Encoding...' : 'Rendering Lyric Video Frames...'}
+                  {renderProgress?.status === 'encoding' ? 'Finalizing & Packing Video File...' : 'Rendering Lyric Video Frames...'}
                 </h3>
                 <p className="text-xs text-white/40 mt-1 font-mono">
-                  {formatTime(renderProgress?.currentTime || 0, true)} / {formatTime(renderProgress?.totalDuration || 38, true)}
+                  {formatTime(renderProgress?.currentTime || 0, true)} / {formatTime(renderProgress?.totalDuration || effectiveExportDuration, true)}
                 </p>
               </div>
 
@@ -250,7 +299,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div className="w-full bg-white/10 rounded-full h-2.5 overflow-hidden">
                 <div 
                   className="bg-purple-500 h-full rounded-full transition-all duration-150 shadow-[0_0_8px_rgba(168,85,247,0.8)]"
-                  style={{ width: `${Math.max(4, (renderProgress?.progress || 0) * 100)}%` }}
+                  style={{ width: `${Math.max(6, Math.min(100, (renderProgress?.progress || 0) * 100))}%` }}
                 />
               </div>
 
@@ -293,7 +342,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-3 rounded-lg shadow-lg shadow-purple-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Download Lyric Video (.webm / .mp4)</span>
+                  <span>Download Video ({exportedBlobType.includes('mp4') ? '.mp4' : '.webm'})</span>
                 </button>
 
                 <div className="grid grid-cols-2 gap-2">

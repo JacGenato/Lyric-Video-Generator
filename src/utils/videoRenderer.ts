@@ -459,6 +459,36 @@ function drawActiveLyrics(
 }
 
 /**
+ * Safely load an image and verify that drawing it will not taint the canvas for MediaStream capture
+ */
+async function loadSafeImage(url: string): Promise<HTMLImageElement | null> {
+  if (!url) return null;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const testCanvas = document.createElement('canvas');
+        testCanvas.width = 2;
+        testCanvas.height = 2;
+        const testCtx = testCanvas.getContext('2d');
+        if (testCtx) {
+          testCtx.drawImage(img, 0, 0, 2, 2);
+          testCtx.getImageData(0, 0, 1, 1); // Throws SecurityError if tainted
+          resolve(img);
+          return;
+        }
+      } catch (e) {
+        console.warn('Image is cross-origin tainted, falling back to procedural gradient for video export:', e);
+      }
+      resolve(null);
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/**
  * High quality client-side canvas video recorder using MediaRecorder and AudioContext
  */
 export async function renderAndExportVideo(
@@ -466,9 +496,15 @@ export async function renderAndExportVideo(
   canvasWidth: number,
   canvasHeight: number,
   onProgress: (info: RenderProgress) => void,
-  cancelSignal: { cancelled: boolean }
+  cancelSignal: { cancelled: boolean },
+  customDuration?: number
 ): Promise<Blob> {
-  const duration = project.audio.duration || 30;
+  // Determine duration
+  let duration = customDuration || project.audio.duration || 30;
+  if (!duration || duration <= 0 || isNaN(duration)) {
+    duration = 30;
+  }
+  
   const fps = 30;
   const totalFrames = Math.ceil(duration * fps);
 
@@ -476,20 +512,13 @@ export async function renderAndExportVideo(
   const canvas = document.createElement('canvas');
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
-  const ctx = canvas.getContext('2d', { alpha: false });
-  if (!ctx) throw new Error('Failed to get 2D canvas context');
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  if (!ctx) throw new Error('Failed to get 2D canvas context for rendering.');
 
-  // 2. Prepare Background Media
+  // 2. Prepare Background Media safely (checking for CORS tainting)
   let bgMedia: HTMLImageElement | HTMLVideoElement | null = null;
   if (project.background.type === 'image' && project.background.url) {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = project.background.url;
-    await new Promise((resolve) => {
-      img.onload = resolve;
-      img.onerror = resolve; // proceed even if image fails
-    });
-    bgMedia = img;
+    bgMedia = await loadSafeImage(project.background.url);
   }
 
   // 3. Initialize Particles
@@ -507,28 +536,64 @@ export async function renderAndExportVideo(
   }
 
   // 4. Setup MediaStream & MediaRecorder
-  const videoStream = canvas.captureStream(fps);
-  const audioStream = audioEngine.getAudioStream();
+  let videoStream: MediaStream;
+  try {
+    videoStream = canvas.captureStream(fps);
+  } catch (err: any) {
+    throw new Error(`Browser canvas capture not supported: ${err?.message || err}`);
+  }
 
   const combinedStream = new MediaStream();
   videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-  if (audioStream) {
-    audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+
+  // Audio track (optional, if available)
+  try {
+    const audioStream = audioEngine.getAudioStream();
+    if (audioStream) {
+      const audioTracks = audioStream.getAudioTracks();
+      audioTracks.forEach(track => {
+        if (track.readyState === 'live') {
+          combinedStream.addTrack(track);
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('Audio stream attach warning:', err);
   }
 
   // Pick supported mime type
-  const mimeTypes = [
+  const candidateMimes = [
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=h264,opus',
     'video/webm',
+    'video/mp4;codecs=avc1,mp4a.40.2',
     'video/mp4',
+    '',
   ];
-  let chosenMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
 
-  const recorder = new MediaRecorder(combinedStream, {
-    mimeType: chosenMime,
-    videoBitsPerSecond: 6000000, // 6 Mbps high quality
-  });
+  let chosenMime = '';
+  for (const m of candidateMimes) {
+    if (m === '' || (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m))) {
+      chosenMime = m;
+      break;
+    }
+  }
+
+  const bitrate = canvasWidth >= 1920 || canvasHeight >= 1920 ? 8000000 : 4000000;
+  
+  let recorder: MediaRecorder;
+  try {
+    const options: MediaRecorderOptions = { videoBitsPerSecond: bitrate };
+    if (chosenMime) {
+      options.mimeType = chosenMime;
+    }
+    recorder = new MediaRecorder(combinedStream, options);
+  } catch (e: any) {
+    console.warn('Failed to create MediaRecorder with options, trying standard:', e);
+    recorder = new MediaRecorder(combinedStream);
+    chosenMime = recorder.mimeType || 'video/webm';
+  }
 
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => {
@@ -537,19 +602,130 @@ export async function renderAndExportVideo(
     }
   };
 
-  // 5. Start audio and recording
+  // 5. Draw initial frame immediately so stream has active visual buffer
+  drawLyricFrame(ctx, canvasWidth, canvasHeight, 0, project, bgMedia, new Uint8Array(64).fill(0), particles);
+
+  // 6. Start audio and recording
   audioEngine.seek(0);
-  await audioEngine.play();
-  recorder.start(500);
+  try {
+    await audioEngine.play();
+  } catch (err) {
+    console.warn('Audio play trigger during export:', err);
+  }
+
+  try {
+    recorder.start(250); // Emit chunks every 250ms
+  } catch (err: any) {
+    throw new Error(`Failed to start MediaRecorder: ${err?.message || err}`);
+  }
 
   return new Promise((resolve, reject) => {
     let frame = 0;
-    const startTime = performance.now();
+    let isFinished = false;
+    let fallbackTimeoutId: number | null = null;
+
+    const cleanupStreamsAndAudio = () => {
+      try {
+        audioEngine.pause();
+        audioEngine.seek(0);
+      } catch {}
+      try {
+        combinedStream.getTracks().forEach(t => t.stop());
+        videoStream.getTracks().forEach(t => t.stop());
+      } catch {}
+    };
+
+    const finishExport = () => {
+      if (isFinished) return;
+      isFinished = true;
+      if (fallbackTimeoutId) {
+        window.clearTimeout(fallbackTimeoutId);
+        fallbackTimeoutId = null;
+      }
+
+      cleanupStreamsAndAudio();
+
+      if (chunks.length === 0) {
+        reject(new Error('MediaRecorder produced no video data chunks. Please try exporting in 720p.'));
+        return;
+      }
+
+      const mime = recorder.mimeType || chosenMime || 'video/webm';
+      const finalBlob = new Blob(chunks, { type: mime });
+
+      onProgress({
+        progress: 1.0,
+        currentTime: duration,
+        totalDuration: duration,
+        currentFrame: totalFrames,
+        totalFrames,
+        status: 'completed',
+      });
+
+      resolve(finalBlob);
+    };
+
+    recorder.onstop = () => {
+      finishExport();
+    };
+
+    recorder.onerror = (errEvent: any) => {
+      console.warn('MediaRecorder error event:', errEvent);
+      if (chunks.length > 0) {
+        finishExport();
+      } else {
+        cleanupStreamsAndAudio();
+        reject(new Error('Video recording error during export.'));
+      }
+    };
+
+    const stopRecordingCleanly = () => {
+      onProgress({
+        progress: 0.99,
+        currentTime: duration,
+        totalDuration: duration,
+        currentFrame: totalFrames,
+        totalFrames,
+        status: 'encoding',
+      });
+
+      try {
+        if (recorder.state === 'recording') {
+          recorder.requestData();
+        }
+      } catch (e) {
+        console.warn('requestData error:', e);
+      }
+
+      try {
+        if (recorder.state === 'recording' || recorder.state === 'paused') {
+          recorder.stop();
+        }
+      } catch (e) {
+        console.warn('recorder stop error:', e);
+      }
+
+      // Safety timeout: If onstop doesn't fire within 1500ms, force finish
+      fallbackTimeoutId = window.setTimeout(() => {
+        if (!isFinished) {
+          console.warn('Forcing export completion via safety timeout fallback.');
+          finishExport();
+        }
+      }, 1500);
+    };
 
     const renderLoop = () => {
+      if (isFinished) return;
+
       if (cancelSignal.cancelled) {
-        recorder.stop();
-        audioEngine.pause();
+        isFinished = true;
+        try {
+          if (recorder.state === 'recording') {
+            recorder.stop();
+          }
+        } catch {}
+        cleanupStreamsAndAudio();
+
         onProgress({
           progress: 0,
           currentTime: 0,
@@ -558,11 +734,11 @@ export async function renderAndExportVideo(
           totalFrames,
           status: 'cancelled',
         });
-        return reject(new Error('Export was cancelled by user'));
+        return reject(new Error('Export was cancelled by user.'));
       }
 
       const currentTime = audioEngine.getCurrentTime();
-      const progress = Math.min(1, currentTime / duration);
+      const progress = Math.min(0.99, currentTime / duration);
 
       // Update particles
       for (const p of particles) {
@@ -582,33 +758,14 @@ export async function renderAndExportVideo(
         totalDuration: duration,
         currentFrame: frame,
         totalFrames,
-        status: progress >= 0.99 ? 'encoding' : 'rendering',
+        status: 'rendering',
       });
 
-      if (currentTime >= duration || progress >= 1.0) {
-        audioEngine.pause();
-        recorder.stop();
+      if (currentTime >= duration || frame >= totalFrames) {
+        stopRecordingCleanly();
       } else {
         requestAnimationFrame(renderLoop);
       }
-    };
-
-    recorder.onstop = () => {
-      const finalBlob = new Blob(chunks, { type: chosenMime });
-      onProgress({
-        progress: 1.0,
-        currentTime: duration,
-        totalDuration: duration,
-        currentFrame: totalFrames,
-        totalFrames,
-        status: 'completed',
-      });
-      resolve(finalBlob);
-    };
-
-    recorder.onerror = (err) => {
-      audioEngine.pause();
-      reject(err);
     };
 
     requestAnimationFrame(renderLoop);
