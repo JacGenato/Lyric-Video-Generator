@@ -696,6 +696,87 @@ async function loadSafeImage(url: string): Promise<HTMLImageElement | null> {
 }
 
 /**
+ * Injects EBML Duration metadata into a WebM Blob so that video players
+ * (VLC, Chrome, QuickTime, Windows Media Player) recognize the full video duration
+ * and allow seeking instead of freezing at 0:00 or hanging.
+ */
+async function fixWebmDuration(blob: Blob, durationMs: number): Promise<Blob> {
+  try {
+    const buffer = await blob.arrayBuffer();
+    const view = new DataView(buffer);
+    const bytes = new Uint8Array(buffer);
+
+    // Search for EBML Segment Info tag [0x15, 0x49, 0xA9, 0x66]
+    let segmentInfoOffset = -1;
+    for (let i = 0; i < Math.min(bytes.length - 4, 1024 * 32); i++) {
+      if (
+        bytes[i] === 0x15 &&
+        bytes[i + 1] === 0x49 &&
+        bytes[i + 2] === 0xa9 &&
+        bytes[i + 3] === 0x66
+      ) {
+        segmentInfoOffset = i;
+        break;
+      }
+    }
+
+    if (segmentInfoOffset === -1) {
+      return blob;
+    }
+
+    // Search for Duration tag [0x44, 0x89] inside Segment Info
+    let durationOffset = -1;
+    const searchLimit = Math.min(bytes.length - 10, segmentInfoOffset + 1024);
+
+    for (let i = segmentInfoOffset + 4; i < searchLimit; i++) {
+      if (bytes[i] === 0x44 && bytes[i + 1] === 0x89) {
+        durationOffset = i;
+        break;
+      }
+    }
+
+    if (durationOffset !== -1) {
+      const sizeByte = bytes[durationOffset + 2];
+      if (sizeByte === 0x84) {
+        view.setFloat32(durationOffset + 3, durationMs, false);
+        return new Blob([buffer], { type: blob.type || 'video/webm' });
+      } else if (sizeByte === 0x88) {
+        view.setFloat64(durationOffset + 3, durationMs, false);
+        return new Blob([buffer], { type: blob.type || 'video/webm' });
+      }
+    }
+
+    // If duration tag is not present, insert it into Segment Info
+    let offset = segmentInfoOffset + 4;
+    let firstByte = bytes[offset];
+    let numBytes = 1;
+    let mask = 0x80;
+    while (mask > 0 && (firstByte & mask) === 0) {
+      numBytes++;
+      mask >>= 1;
+    }
+    const infoDataOffset = offset + numBytes;
+
+    const durationTag = new Uint8Array(11);
+    durationTag[0] = 0x44;
+    durationTag[1] = 0x89;
+    durationTag[2] = 0x88;
+    const durView = new DataView(durationTag.buffer);
+    durView.setFloat64(3, durationMs, false);
+
+    const newBytes = new Uint8Array(bytes.length + 11);
+    newBytes.set(bytes.subarray(0, infoDataOffset), 0);
+    newBytes.set(durationTag, infoDataOffset);
+    newBytes.set(bytes.subarray(infoDataOffset), infoDataOffset + 11);
+
+    return new Blob([newBytes.buffer], { type: blob.type || 'video/webm' });
+  } catch (err) {
+    console.warn('fixWebmDuration fallback warning:', err);
+    return blob;
+  }
+}
+
+/**
  * High quality client-side canvas video recorder using MediaRecorder and AudioContext
  */
 export async function renderAndExportVideo(
@@ -724,7 +805,7 @@ export async function renderAndExportVideo(
   const canvas = document.createElement('canvas');
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
-  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) throw new Error('Failed to get 2D canvas context for rendering.');
 
   // 2. Prepare Background Media safely (checking for CORS tainting)
@@ -840,7 +921,7 @@ export async function renderAndExportVideo(
   }
 
   try {
-    recorder.start(250); // Emit chunks every 250ms
+    recorder.start(200); // Emit chunks every 200ms
   } catch (err: any) {
     throw new Error(`Failed to start MediaRecorder: ${err?.message || err}`);
   }
@@ -857,12 +938,12 @@ export async function renderAndExportVideo(
         audioEngine.seek(0);
       } catch {}
       try {
-        combinedStream.getTracks().forEach(t => t.stop());
+        // Only stop video track from canvas, preserve audio destination node
         videoStream.getTracks().forEach(t => t.stop());
       } catch {}
     };
 
-    const finishExport = () => {
+    const finishExport = async () => {
       if (isFinished) return;
       isFinished = true;
       if (fallbackTimeoutId) {
@@ -878,7 +959,16 @@ export async function renderAndExportVideo(
       }
 
       const mime = recorder.mimeType || chosenMime || 'video/webm';
-      const finalBlob = new Blob(chunks, { type: mime });
+      let finalBlob = new Blob(chunks, { type: mime });
+
+      // If WebM, inject EBML duration metadata so video players don't hang
+      if (mime.includes('webm')) {
+        try {
+          finalBlob = await fixWebmDuration(finalBlob, duration * 1000);
+        } catch (e) {
+          console.warn('WebM duration patch skipped:', e);
+        }
+      }
 
       onProgress({
         progress: 1.0,
@@ -917,14 +1007,6 @@ export async function renderAndExportVideo(
       });
 
       try {
-        if (recorder.state === 'recording') {
-          recorder.requestData();
-        }
-      } catch (e) {
-        console.warn('requestData error:', e);
-      }
-
-      try {
         if (recorder.state === 'recording' || recorder.state === 'paused') {
           recorder.stop();
         }
@@ -932,13 +1014,13 @@ export async function renderAndExportVideo(
         console.warn('recorder stop error:', e);
       }
 
-      // Safety timeout: If onstop doesn't fire within 1500ms, force finish
+      // Safety timeout: If onstop doesn't fire within 3000ms, force finish
       fallbackTimeoutId = window.setTimeout(() => {
         if (!isFinished) {
           console.warn('Forcing export completion via safety timeout fallback.');
           finishExport();
         }
-      }, 1500);
+      }, 3000);
     };
 
     const renderLoop = () => {

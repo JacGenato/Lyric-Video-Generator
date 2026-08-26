@@ -231,7 +231,23 @@ class AudioEngine {
   }
 
   public getAudioStream(): MediaStream | null {
-    return this.streamDest ? this.streamDest.stream : null;
+    if (!this.ctx) {
+      this.initContext();
+    }
+    if (this.ctx && this.analyser) {
+      // If streamDest is missing or tracks are ended/stopped, reconnect a fresh stream destination
+      if (!this.streamDest || this.streamDest.stream.getAudioTracks().length === 0 || this.streamDest.stream.getAudioTracks().some(t => t.readyState === 'ended')) {
+        try {
+          if (this.streamDest) {
+            this.analyser.disconnect(this.streamDest);
+          }
+        } catch {}
+        this.streamDest = this.ctx.createMediaStreamDestination();
+        this.analyser.connect(this.streamDest);
+      }
+      return this.streamDest.stream;
+    }
+    return null;
   }
 
   public onTimeUpdate(cb: (time: number) => void): () => void {

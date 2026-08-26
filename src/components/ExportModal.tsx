@@ -123,11 +123,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     if (!exportedVideoUrl) return;
     const a = document.createElement('a');
     a.href = exportedVideoUrl;
-    const isMp4 = selectedFormat === 'mp4' || exportedBlobType.includes('mp4');
-    const ext = isMp4 ? 'mp4' : 'webm';
+    const isRealMp4 = exportedBlobType.toLowerCase().includes('mp4');
+    const ext = isRealMp4 ? 'mp4' : 'webm';
     const safeTitle = (project.title || 'lyric_video').toLowerCase().replace(/[^a-z0-9]/g, '_');
     a.download = `${safeTitle}_${project.aspectRatio.replace(':', '_')}.${ext}`;
+    document.body.appendChild(a);
     a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 200);
   };
 
   const handleDownloadLrc = () => {
@@ -137,8 +141,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `${project.title || 'lyrics'}.lrc`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
   };
 
   const handleDownloadSrt = () => {
@@ -148,8 +156,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = `${project.title || 'lyrics'}.srt`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
   };
 
   return (
