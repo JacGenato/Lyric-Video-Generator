@@ -149,8 +149,16 @@ export function drawLyricFrame(
   // 6. Draw Title Card at Start of Video (if active)
   drawIntroTitleCard(ctx, width, height, currentTime, project);
 
-  // 7. Draw Lyrics
+  // 7. Draw Lyrics (suppressed when title card is actively showing)
   drawActiveLyrics(ctx, width, height, currentTime, project);
+}
+
+export function isIntroTitleActive(project: ProjectData, currentTime: number): boolean {
+  const intro = project.introTitle;
+  if (!intro || intro.enabled === false) return false;
+  const startTime = intro.startTime ?? 0;
+  const endTime = intro.endTime ?? (intro.duration !== undefined ? startTime + intro.duration : 3.5);
+  return currentTime >= startTime && currentTime <= endTime;
 }
 
 function drawIntroTitleCard(
@@ -162,25 +170,30 @@ function drawIntroTitleCard(
 ) {
   const intro = project.introTitle;
   // If disabled explicitly, skip
-  if (intro && intro.enabled === false) return;
+  if (!intro || intro.enabled === false) return;
 
-  const duration = intro?.duration ?? 3.5;
-  if (currentTime > duration) return;
+  const startTime = intro.startTime ?? 0;
+  const endTime = intro.endTime ?? (intro.duration !== undefined ? startTime + intro.duration : 3.5);
 
-  const titleText = (intro?.title || project.title || 'Untitled Track').trim();
-  const artistText = (intro?.artist || project.artist || '').trim();
-  const subtitleText = (intro?.subtitle ?? 'OFFICIAL LYRIC VIDEO').trim();
-  const theme = intro?.theme || 'cinematic';
-  const animation = intro?.animation || 'fade';
-  const textColor = intro?.textColor || '#ffffff';
-  const accentColor = intro?.accentColor || project.font.accentColor || '#f59e0b';
-  const fontMultiplier = intro?.fontSizeMultiplier || 1.0;
+  if (currentTime < startTime || currentTime > endTime) return;
 
-  // Calculate smooth fade in (0 to 0.5s) and fade out (last 0.6s)
-  const fadeInDuration = 0.5;
-  const fadeOutDuration = 0.6;
-  const inAlpha = Math.max(0, Math.min(1, currentTime / fadeInDuration));
-  const outAlpha = Math.max(0, Math.min(1, (duration - currentTime) / fadeOutDuration));
+  const totalDuration = Math.max(0.2, endTime - startTime);
+  const timeSinceStart = currentTime - startTime;
+
+  const titleText = (intro.title || project.title || 'Untitled Track').trim();
+  const artistText = (intro.artist || project.artist || '').trim();
+  const subtitleText = (intro.subtitle ?? 'OFFICIAL LYRIC VIDEO').trim();
+  const theme = intro.theme || 'cinematic';
+  const animation = intro.animation || 'fade';
+  const textColor = intro.textColor || '#ffffff';
+  const accentColor = intro.accentColor || project.font.accentColor || '#f59e0b';
+  const fontMultiplier = intro.fontSizeMultiplier || 1.0;
+
+  // Calculate smooth fade in and fade out
+  const fadeInDuration = Math.min(0.5, totalDuration * 0.25);
+  const fadeOutDuration = Math.min(0.6, totalDuration * 0.25);
+  const inAlpha = Math.max(0, Math.min(1, timeSinceStart / Math.max(0.01, fadeInDuration)));
+  const outAlpha = Math.max(0, Math.min(1, (endTime - currentTime) / Math.max(0.01, fadeOutDuration)));
   const alpha = Math.min(inAlpha, outAlpha);
 
   if (alpha <= 0.001) return;
@@ -193,7 +206,7 @@ function drawIntroTitleCard(
   let offsetY = 0;
 
   if (animation === 'zoom') {
-    scale = 0.94 + (currentTime / duration) * 0.08;
+    scale = 0.94 + (timeSinceStart / totalDuration) * 0.08;
   } else if (animation === 'slide-up') {
     offsetY = (1 - inAlpha) * (height * 0.04);
   }
@@ -447,6 +460,11 @@ function drawActiveLyrics(
   currentTime: number,
   project: ProjectData
 ) {
+  // If intro title card is active on screen, remove/hide lyrics so title card takes full focus
+  if (isIntroTitleActive(project, currentTime)) {
+    return;
+  }
+
   const { font, animation, lyrics } = project;
   if (!lyrics || lyrics.length === 0) return;
 

@@ -4,15 +4,13 @@ import {
   Sparkles, 
   Play, 
   Clock, 
-  Palette, 
   Type, 
-  Sliders, 
   Check, 
-  Eye, 
-  Layers, 
   Film,
-  Zap,
-  Tag
+  Timer,
+  ChevronRight,
+  EyeOff,
+  Crosshair
 } from 'lucide-react';
 import { IntroTitleSettings, ProjectData } from '../types';
 import { audioEngine } from '../utils/audioEngine';
@@ -32,6 +30,8 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
     title: project.title || 'Untitled Track',
     artist: project.artist || '',
     subtitle: 'OFFICIAL LYRIC VIDEO',
+    startTime: 0.0,
+    endTime: 3.5,
     duration: 3.5,
     theme: 'cinematic',
     animation: 'fade',
@@ -40,22 +40,45 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
     fontSizeMultiplier: 1.0,
   };
 
+  const startTime = intro.startTime ?? 0.0;
+  const endTime = intro.endTime ?? (intro.duration !== undefined ? startTime + intro.duration : 3.5);
+  const calculatedDuration = Math.max(0.1, Number((endTime - startTime).toFixed(2)));
+
   const updateIntro = (updates: Partial<IntroTitleSettings>) => {
-    setProject(p => ({
-      ...p,
-      introTitle: {
-        ...(p.introTitle || intro),
-        ...updates,
-      },
-      // Keep project.title and project.artist in sync if edited here
-      ...(updates.title !== undefined ? { title: updates.title } : {}),
-      ...(updates.artist !== undefined ? { artist: updates.artist } : {}),
-    }));
+    setProject(p => {
+      const currentIntro = p.introTitle || intro;
+      const merged = { ...currentIntro, ...updates };
+      // Keep duration in sync with endTime - startTime
+      if (updates.startTime !== undefined || updates.endTime !== undefined) {
+        const s = updates.startTime !== undefined ? updates.startTime : (merged.startTime ?? 0);
+        const e = updates.endTime !== undefined ? updates.endTime : (merged.endTime ?? (s + (merged.duration || 3.5)));
+        merged.duration = Math.max(0.1, Number((e - s).toFixed(2)));
+      }
+      return {
+        ...p,
+        introTitle: merged,
+        // Keep project.title and project.artist in sync if edited here
+        ...(updates.title !== undefined ? { title: updates.title } : {}),
+        ...(updates.artist !== undefined ? { artist: updates.artist } : {}),
+      };
+    });
   };
 
   const handlePreviewIntro = async () => {
-    audioEngine.seek(0);
+    audioEngine.seek(startTime);
     await audioEngine.play();
+  };
+
+  const handleSetStartTimeCurrent = () => {
+    const curr = Number(audioEngine.getCurrentTime().toFixed(1));
+    const newEnd = curr >= endTime ? curr + 3.0 : endTime;
+    updateIntro({ startTime: curr, endTime: newEnd });
+  };
+
+  const handleSetEndTimeCurrent = () => {
+    const curr = Number(audioEngine.getCurrentTime().toFixed(1));
+    const newStart = curr <= startTime ? Math.max(0, curr - 3.0) : startTime;
+    updateIntro({ startTime: newStart, endTime: curr });
   };
 
   const tagPresets = [
@@ -118,9 +141,11 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
     '#f43f5e', // Rose Red
   ];
 
+  const maxAudioDuration = project.audio.duration || 60;
+
   return (
     <div className="bg-[#16161D] border border-white/10 rounded-xl p-4 flex flex-col gap-5 shadow-2xl h-full overflow-y-auto custom-scrollbar">
-      {/* Header & Quick Action */}
+      {/* Header & Master Switch */}
       <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
         <div className="flex items-center gap-2.5">
           <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/30">
@@ -128,7 +153,7 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
           </div>
           <div>
             <h3 className="font-bold text-xs uppercase tracking-widest text-white/90">Video Intro & Title Card</h3>
-            <p className="text-[11px] text-white/40">Customize the opening title sequence for the video</p>
+            <p className="text-[11px] text-white/40">Opening title display settings & screen timing</p>
           </div>
         </div>
 
@@ -149,11 +174,148 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
       {/* Quick Play Intro Preview Button */}
       <button
         onClick={handlePreviewIntro}
-        className="w-full py-2 px-3 bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/50 hover:to-indigo-600/50 border border-purple-500/40 text-purple-200 hover:text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer active:scale-[0.99]"
+        className="w-full py-2.5 px-3 bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/50 hover:to-indigo-600/50 border border-purple-500/40 text-purple-200 hover:text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer active:scale-[0.99]"
       >
         <Play className="w-3.5 h-3.5 fill-current text-purple-400" />
-        <span>Preview Opening Title Card (Play from 0:00)</span>
+        <span>Preview Title Card (Play from {startTime.toFixed(1)}s to {endTime.toFixed(1)}s)</span>
       </button>
+
+      {/* Title Timing (Start Time & End Time) */}
+      <div className="space-y-3 bg-black/20 p-3.5 rounded-lg border border-purple-500/20 shadow-inner">
+        <div className="flex items-center justify-between border-b border-white/5 pb-2">
+          <label className="text-[10px] font-bold text-purple-300 uppercase tracking-widest flex items-center gap-1.5">
+            <Timer className="w-3.5 h-3.5 text-purple-400" />
+            <span>Title Timing & Display Window</span>
+          </label>
+          <div className="flex items-center gap-1 text-[11px] font-mono text-purple-300 font-bold bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/30">
+            <Clock className="w-3 h-3 text-purple-400" />
+            <span>Duration: {calculatedDuration}s</span>
+          </div>
+        </div>
+
+        {/* Start Time & End Time Dual Input Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Start Time */}
+          <div className="bg-[#121218] border border-white/10 rounded-lg p-2.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-white/80">Start Time</span>
+              <button
+                type="button"
+                onClick={handleSetStartTimeCurrent}
+                title="Set start time to current playback position"
+                className="text-[10px] text-purple-300 hover:text-white bg-purple-500/20 hover:bg-purple-500/40 px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Crosshair className="w-2.5 h-2.5" />
+                <span>Current Playhead</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => updateIntro({ startTime: Math.max(0, Number((startTime - 0.5).toFixed(1))) })}
+                className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 hover:text-white font-mono"
+              >
+                -0.5s
+              </button>
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max={endTime - 0.1}
+                  value={startTime}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || 0;
+                    updateIntro({ startTime: Math.max(0, val) });
+                  }}
+                  className="w-full bg-black/50 border border-white/15 focus:border-purple-500 px-2.5 py-1.5 rounded text-center text-xs font-mono font-bold text-white outline-none"
+                />
+                <span className="absolute right-2 top-1.5 text-[10px] text-white/40 font-mono pointer-events-none">sec</span>
+              </div>
+              <button
+                onClick={() => updateIntro({ startTime: Math.min(endTime - 0.1, Number((startTime + 0.5).toFixed(1))) })}
+                className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 hover:text-white font-mono"
+              >
+                +0.5s
+              </button>
+            </div>
+
+            <input
+              type="range"
+              min="0"
+              max={Math.min(30, maxAudioDuration)}
+              step="0.1"
+              value={startTime}
+              onChange={(e) => updateIntro({ startTime: Math.min(endTime - 0.1, parseFloat(e.target.value)) })}
+              className="w-full accent-purple-500 cursor-pointer h-1.5"
+            />
+          </div>
+
+          {/* End Time */}
+          <div className="bg-[#121218] border border-white/10 rounded-lg p-2.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-white/80">End Time</span>
+              <button
+                type="button"
+                onClick={handleSetEndTimeCurrent}
+                title="Set end time to current playback position"
+                className="text-[10px] text-purple-300 hover:text-white bg-purple-500/20 hover:bg-purple-500/40 px-1.5 py-0.5 rounded flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Crosshair className="w-2.5 h-2.5" />
+                <span>Current Playhead</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => updateIntro({ endTime: Math.max(startTime + 0.1, Number((endTime - 0.5).toFixed(1))) })}
+                className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 hover:text-white font-mono"
+              >
+                -0.5s
+              </button>
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  step="0.1"
+                  min={startTime + 0.1}
+                  max={maxAudioDuration}
+                  value={endTime}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || startTime + 1.0;
+                    updateIntro({ endTime: Math.max(startTime + 0.1, val) });
+                  }}
+                  className="w-full bg-black/50 border border-white/15 focus:border-purple-500 px-2.5 py-1.5 rounded text-center text-xs font-mono font-bold text-white outline-none"
+                />
+                <span className="absolute right-2 top-1.5 text-[10px] text-white/40 font-mono pointer-events-none">sec</span>
+              </div>
+              <button
+                onClick={() => updateIntro({ endTime: Number((endTime + 0.5).toFixed(1)) })}
+                className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-white/70 hover:text-white font-mono"
+              >
+                +0.5s
+              </button>
+            </div>
+
+            <input
+              type="range"
+              min="0.5"
+              max={Math.min(30, maxAudioDuration)}
+              step="0.1"
+              value={endTime}
+              onChange={(e) => updateIntro({ endTime: Math.max(startTime + 0.1, parseFloat(e.target.value)) })}
+              className="w-full accent-purple-500 cursor-pointer h-1.5"
+            />
+          </div>
+        </div>
+
+        {/* Clean Screen Notice */}
+        <div className="bg-purple-950/30 border border-purple-500/30 rounded-lg p-2.5 flex items-center gap-2.5 text-purple-200">
+          <EyeOff className="w-4 h-4 text-purple-400 shrink-0" />
+          <p className="text-[11px] leading-relaxed">
+            <strong className="text-purple-300 font-semibold">Clean Intro Focus:</strong> Lyrics are automatically suppressed on screen between <span className="font-mono font-bold text-white">{startTime.toFixed(1)}s</span> and <span className="font-mono font-bold text-white">{endTime.toFixed(1)}s</span> so your title card stays unobstructed.
+          </p>
+        </div>
+      </div>
 
       {/* 1. Title Text Inputs */}
       <div className="space-y-3 bg-black/20 p-3 rounded-lg border border-white/5">
@@ -214,7 +376,7 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
                 <button
                   key={tag}
                   onClick={() => updateIntro({ subtitle: tag })}
-                  className={`text-[10px] px-2 py-0.5 rounded-full border transition-all ${
+                  className={`text-[10px] px-2 py-0.5 rounded-full border transition-all cursor-pointer ${
                     intro.subtitle === tag
                       ? 'bg-purple-500/20 border-purple-500/60 text-purple-200'
                       : 'bg-white/5 border-white/10 text-white/50 hover:text-white hover:bg-white/10'
@@ -228,35 +390,7 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
         </div>
       </div>
 
-      {/* 2. Intro Display Duration */}
-      <div className="space-y-2 bg-black/20 p-3 rounded-lg border border-white/5">
-        <div className="flex items-center justify-between">
-          <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest flex items-center gap-1.5">
-            <Clock className="w-3 h-3 text-purple-400" />
-            <span>Title Duration on Screen</span>
-          </label>
-          <span className="font-mono text-xs text-purple-300 font-bold bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/30">
-            {intro.duration} seconds
-          </span>
-        </div>
-
-        <input
-          type="range"
-          min="1.0"
-          max="8.0"
-          step="0.5"
-          value={intro.duration}
-          onChange={(e) => updateIntro({ duration: parseFloat(e.target.value) })}
-          className="w-full accent-purple-500 cursor-pointer"
-        />
-        <div className="flex justify-between text-[10px] text-white/30 font-mono">
-          <span>1.0s (Quick Flash)</span>
-          <span>3.5s (Standard Intro)</span>
-          <span>8.0s (Long Cinematic)</span>
-        </div>
-      </div>
-
-      {/* 3. Title Theme / Layout Style */}
+      {/* 2. Title Theme / Layout Style */}
       <div className="space-y-2.5">
         <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest flex items-center gap-1.5">
           <Sparkles className="w-3 h-3 text-purple-400" />
@@ -284,7 +418,7 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
         </div>
       </div>
 
-      {/* 4. Animation Entrance */}
+      {/* 3. Animation Entrance */}
       <div className="space-y-2.5">
         <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest flex items-center gap-1.5">
           <Clapperboard className="w-3 h-3 text-purple-400" />
@@ -309,7 +443,7 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
         </div>
       </div>
 
-      {/* 5. Colors & Typography Scale */}
+      {/* 4. Colors & Typography Scale */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-black/20 p-3 rounded-lg border border-white/5">
         {/* Accent Color */}
         <div className="space-y-2">
@@ -331,7 +465,7 @@ export const TitleEditor: React.FC<TitleEditorProps> = ({
               <button
                 key={c}
                 onClick={() => updateIntro({ accentColor: c })}
-                className="w-4 h-4 rounded-full border border-white/20 hover:scale-110 transition-transform"
+                className="w-4 h-4 rounded-full border border-white/20 hover:scale-110 transition-transform cursor-pointer"
                 style={{ backgroundColor: c }}
                 title={c}
               />

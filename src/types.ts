@@ -95,7 +95,9 @@ export interface IntroTitleSettings {
   title: string;
   artist: string;
   subtitle: string;
-  duration: number; // in seconds (1.0 - 8.0)
+  startTime: number; // in seconds (e.g. 0.0)
+  endTime: number; // in seconds (e.g. 3.5)
+  duration?: number; // in seconds (calculated or fallback)
   theme: 'cinematic' | 'minimal' | 'neon' | 'bold-center' | 'vintage';
   animation: 'fade' | 'zoom' | 'slide-up' | 'blur';
   textColor: string;
