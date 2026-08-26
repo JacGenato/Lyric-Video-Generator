@@ -212,7 +212,13 @@ export const StateManagerModal: React.FC<StateManagerModalProps> = ({
             <label className="text-[11px] text-white/50 hover:text-white flex items-center gap-1 cursor-pointer bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/10">
               <Upload className="w-3 h-3 text-purple-400" />
               <span>Import</span>
-              <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+              <input 
+                type="file" 
+                accept=".json" 
+                onChange={handleImportBackup} 
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                className="hidden" 
+              />
             </label>
             <button
               onClick={handleExportAllBackup}

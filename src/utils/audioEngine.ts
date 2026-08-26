@@ -30,7 +30,7 @@ class AudioEngine {
     // Lazy init context on first user gesture
   }
 
-  private initContext() {
+  public initContext() {
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
@@ -93,11 +93,12 @@ class AudioEngine {
     });
   }
 
-  public loadSampleTrack(preset: 'acoustic' | 'synthwave' | 'chill', duration: number = 38) {
+  public loadSampleTrack(preset: 'acoustic' | 'synthwave' | 'chill' = 'acoustic', duration: number = 38) {
     this.initContext();
     if (this.audioElement) {
       this.audioElement.pause();
       this.audioElement.src = '';
+      this.audioElement = null;
     }
     this.isSynthMode = true;
     this.synthPreset = preset;
@@ -116,6 +117,11 @@ class AudioEngine {
 
   public async play(): Promise<void> {
     this.initContext();
+
+    // If no custom audio loaded, ensure synth mode is ready
+    if (!this.audioElement && !this.isSynthMode) {
+      this.isSynthMode = true;
+    }
 
     if (this.isSynthMode) {
       this.playSynth();

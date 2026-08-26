@@ -105,6 +105,66 @@ export function parseLyricsText(rawText: string, defaultLineDuration: number = 3
 }
 
 /**
+ * Universal file importer for .lrc, .srt, and .txt files
+ */
+export function parseLrcOrSrtOrTxt(content: string): { lyrics: LyricItem[]; title?: string; artist?: string } {
+  let title: string | undefined;
+  let artist: string | undefined;
+
+  // Check for metadata tags in LRC [ti:Song Title] [ar:Artist Name]
+  const titleMatch = content.match(/\[ti:\s*([^\]]+)\]/i);
+  if (titleMatch) title = titleMatch[1].trim();
+
+  const artistMatch = content.match(/\[ar:\s*([^\]]+)\]/i);
+  if (artistMatch) artist = artistMatch[1].trim();
+
+  // Check if it's an SRT subtitle file (contains "-->")
+  if (content.includes('-->')) {
+    const srtBlocks = content.split(/\r?\n\r?\n/);
+    const items: LyricItem[] = [];
+
+    for (const block of srtBlocks) {
+      const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) continue;
+
+      // Find timing line (e.g. 00:00:01,500 --> 00:00:04,200)
+      const timeLineIdx = lines.findIndex(l => l.includes('-->'));
+      if (timeLineIdx === -1) continue;
+
+      const [startPart, endPart] = lines[timeLineIdx].split('-->').map(s => s.trim());
+      const parseSrtTime = (str: string) => {
+        const parts = str.replace(',', '.').split(':');
+        if (parts.length === 3) {
+          return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+        }
+        return 0;
+      };
+
+      const startTime = parseSrtTime(startPart);
+      const endTime = parseSrtTime(endPart);
+      const text = lines.slice(timeLineIdx + 1).join(' ').trim();
+
+      if (text) {
+        items.push({
+          id: `lyric_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          text,
+          startTime: Math.max(0, parseFloat(startTime.toFixed(2))),
+          endTime: Math.max(startTime + 0.5, parseFloat(endTime.toFixed(2))),
+        });
+      }
+    }
+
+    if (items.length > 0) {
+      return { lyrics: sanitizeLyricTimes(items), title, artist };
+    }
+  }
+
+  // Otherwise parse as LRC or plain text
+  const lyrics = parseLyricsText(content);
+  return { lyrics, title, artist };
+}
+
+/**
  * Adjusts sequential lyric times so they flow naturally without overlapping
  * and maintains sequential order.
  */

@@ -50,6 +50,7 @@ export const MediaSettings: React.FC<MediaSettingsProps> = ({
     } catch (err) {
       alert('Could not load audio file. Please ensure it is a valid MP3, WAV, or AAC file.');
     }
+    e.target.value = '';
   };
 
   // Handle Background Image Upload
@@ -68,6 +69,7 @@ export const MediaSettings: React.FC<MediaSettingsProps> = ({
         presetId: undefined,
       },
     }));
+    e.target.value = '';
   };
 
   // Handle Background Video Upload
@@ -86,6 +88,7 @@ export const MediaSettings: React.FC<MediaSettingsProps> = ({
         presetId: undefined,
       },
     }));
+    e.target.value = '';
   };
 
   const handleSelectPreset = (presetId: string) => {
@@ -163,6 +166,7 @@ export const MediaSettings: React.FC<MediaSettingsProps> = ({
             type="file"
             ref={audioInputRef}
             onChange={handleAudioUpload}
+            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
             accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac"
             className="hidden"
           />
@@ -240,6 +244,7 @@ export const MediaSettings: React.FC<MediaSettingsProps> = ({
               type="file"
               ref={imageInputRef}
               onChange={handleImageUpload}
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
               accept="image/*,.jpg,.jpeg,.png,.webp"
               className="hidden"
             />
@@ -247,6 +252,7 @@ export const MediaSettings: React.FC<MediaSettingsProps> = ({
               type="file"
               ref={videoInputRef}
               onChange={handleVideoUpload}
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
               accept="video/*,.mp4,.webm"
               className="hidden"
             />

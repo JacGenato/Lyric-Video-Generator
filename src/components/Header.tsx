@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { 
   Video, 
   Download, 
@@ -14,12 +14,16 @@ import {
   Plus,
   Bookmark,
   FolderOpen,
-  Film
+  Film,
+  Image,
+  Check,
+  ChevronDown
 } from 'lucide-react';
 import { AspectRatio, ProjectData, Resolution } from '../types';
 import { SAMPLE_PROJECTS } from '../utils/sampleData';
-import { exportToLrc, exportToSrt } from '../utils/lrcParser';
+import { exportToLrc, exportToSrt, parseLrcOrSrtOrTxt } from '../utils/lrcParser';
 import { saveState } from '../utils/stateStorage';
+import { audioEngine } from '../utils/audioEngine';
 
 interface HeaderProps {
   project: ProjectData;
@@ -39,7 +43,23 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
 }) => {
   const jsonFileInputRef = useRef<HTMLInputElement>(null);
+  const lyricsFileInputRef = useRef<HTMLInputElement>(null);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
+  const filesMenuRef = useRef<HTMLDivElement>(null);
+
+  const [filesMenuOpen, setFilesMenuOpen] = useState(false);
   const [saveIndicator, setSaveIndicator] = useState(false);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filesMenuRef.current && !filesMenuRef.current.contains(e.target as Node)) {
+        setFilesMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleQuickSave = () => {
     saveState(project);
@@ -63,6 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
     a.download = `${project.title || 'lyrics'}.lrc`;
     a.click();
     URL.revokeObjectURL(url);
+    setFilesMenuOpen(false);
   };
 
   const handleExportSrtFile = () => {
@@ -74,6 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
     a.download = `${project.title || 'lyrics'}.srt`;
     a.click();
     URL.revokeObjectURL(url);
+    setFilesMenuOpen(false);
   };
 
   const handleExportJsonProject = () => {
@@ -85,6 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
     a.download = `${project.title || 'lyric_project'}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    setFilesMenuOpen(false);
   };
 
   const handleImportJsonProject = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -97,12 +120,83 @@ export const Header: React.FC<HeaderProps> = ({
         const loadedData = JSON.parse(evt.target?.result as string);
         if (loadedData && Array.isArray(loadedData.lyrics)) {
           setProject(loadedData);
+          setFilesMenuOpen(false);
         }
       } catch (err) {
         alert('Invalid project JSON file');
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleImportLyricsFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const text = evt.target?.result as string;
+        const parsed = parseLrcOrSrtOrTxt(text);
+        if (parsed.lyrics.length > 0) {
+          setProject(prev => ({
+            ...prev,
+            lyrics: parsed.lyrics,
+            title: parsed.title || prev.title,
+            artist: parsed.artist || prev.artist,
+          }));
+          setActiveTab('editor');
+          setFilesMenuOpen(false);
+        }
+      } catch (err) {
+        alert('Could not parse lyrics file');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleImportAudioFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+    try {
+      const duration = await audioEngine.loadAudioUrl(url);
+      setProject(prev => ({
+        ...prev,
+        audio: {
+          fileUrl: url,
+          fileName: file.name,
+          duration: duration || prev.audio.duration,
+          volume: prev.audio.volume ?? 1,
+          sourceType: 'file',
+        },
+      }));
+      setFilesMenuOpen(false);
+    } catch (err) {
+      console.warn('Audio load error:', err);
+    }
+    e.target.value = '';
+  };
+
+  const handleImportBgFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+    const isVideo = file.type.startsWith('video');
+    setProject(prev => ({
+      ...prev,
+      background: {
+        ...prev.background,
+        type: isVideo ? 'video' : 'image',
+        url,
+      },
+    }));
+    setActiveTab('media');
+    setFilesMenuOpen(false);
     e.target.value = '';
   };
 
@@ -287,50 +381,122 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {/* Quick Menu for Files */}
-          <div className="relative group">
+          <div className="relative" ref={filesMenuRef}>
             <button
               id="btn-file-options"
-              className="bg-white/5 hover:bg-white/10 text-white/80 hover:text-white px-3 py-1.5 rounded-md text-xs font-medium border border-white/10 transition-all flex items-center gap-1.5"
+              onClick={() => setFilesMenuOpen(prev => !prev)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-all flex items-center gap-1.5 cursor-pointer ${
+                filesMenuOpen 
+                  ? 'bg-purple-500/20 text-white border-purple-500/40 shadow-sm' 
+                  : 'bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border-white/10'
+              }`}
               title="Import & Export files"
             >
-              <Share2 className="w-3.5 h-3.5" />
+              <Share2 className="w-3.5 h-3.5 text-purple-400" />
               <span className="hidden sm:inline">Files</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${filesMenuOpen ? 'rotate-180 text-purple-300' : 'text-white/40'}`} />
             </button>
-            <div className="absolute right-0 mt-1 w-48 bg-[#16161D] border border-white/10 rounded-xl shadow-2xl p-1.5 hidden group-hover:block z-50 animate-in fade-in slide-in-from-top-1">
-              <button
-                onClick={() => jsonFileInputRef.current?.click()}
-                className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2"
-              >
-                <Upload className="w-3.5 h-3.5 text-purple-400" />
-                <span>Import Project JSON</span>
-              </button>
-              <div className="h-px bg-white/10 my-1" />
-              <button
-                onClick={handleExportLrcFile}
-                className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2"
-              >
-                <FileText className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Export Synced .LRC</span>
-              </button>
-              <button
-                onClick={handleExportSrtFile}
-                className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2"
-              >
-                <FileText className="w-3.5 h-3.5 text-sky-400" />
-                <span>Export Subtitle .SRT</span>
-              </button>
-              <button
-                onClick={handleExportJsonProject}
-                className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2"
-              >
-                <Download className="w-3.5 h-3.5 text-amber-400" />
-                <span>Export Project Backup</span>
-              </button>
-            </div>
+
+            {filesMenuOpen && (
+              <div className="absolute right-0 mt-1.5 w-56 bg-[#16161D] border border-white/10 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl">
+                <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-white/40 tracking-wider">
+                  Import Files
+                </div>
+                <button
+                  id="btn-import-lyrics-file"
+                  onClick={() => lyricsFileInputRef.current?.click()}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Import Lyrics (.lrc / .srt / .txt)</span>
+                </button>
+                <button
+                  id="btn-import-audio-file"
+                  onClick={() => audioFileInputRef.current?.click()}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Music2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Import Audio (.mp3 / .wav)</span>
+                </button>
+                <button
+                  id="btn-import-bg-file"
+                  onClick={() => bgFileInputRef.current?.click()}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Image className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Import Background (Image/Video)</span>
+                </button>
+                <button
+                  id="btn-import-json-file"
+                  onClick={() => jsonFileInputRef.current?.click()}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Import Project JSON</span>
+                </button>
+
+                <div className="h-px bg-white/10 my-1" />
+
+                <div className="px-2.5 py-1 text-[10px] uppercase font-bold text-white/40 tracking-wider">
+                  Export Files
+                </div>
+                <button
+                  id="btn-export-lrc-file"
+                  onClick={handleExportLrcFile}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Export Synced .LRC</span>
+                </button>
+                <button
+                  id="btn-export-srt-file"
+                  onClick={handleExportSrtFile}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Export Subtitle .SRT</span>
+                </button>
+                <button
+                  id="btn-export-json-file"
+                  onClick={handleExportJsonProject}
+                  className="w-full text-left px-2.5 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Export Project Backup</span>
+                </button>
+              </div>
+            )}
+
+            {/* Hidden File Inputs */}
+            <input
+              type="file"
+              ref={lyricsFileInputRef}
+              onChange={handleImportLyricsFile}
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+              accept=".lrc,.srt,.txt"
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={audioFileInputRef}
+              onChange={handleImportAudioFile}
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={bgFileInputRef}
+              onChange={handleImportBgFile}
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+              accept="image/*,video/*"
+              className="hidden"
+            />
             <input
               type="file"
               ref={jsonFileInputRef}
               onChange={handleImportJsonProject}
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
               accept=".json"
               className="hidden"
             />

@@ -827,6 +827,7 @@ export async function renderAndExportVideo(
   drawLyricFrame(ctx, canvasWidth, canvasHeight, 0, project, bgMedia, new Uint8Array(64).fill(0), particles);
 
   // 6. Start audio and recording
+  audioEngine.initContext();
   audioEngine.seek(0);
   try {
     await audioEngine.play();
@@ -841,6 +842,7 @@ export async function renderAndExportVideo(
   }
 
   return new Promise((resolve, reject) => {
+    const renderStartTime = performance.now();
     let frame = 0;
     let isFinished = false;
     let fallbackTimeoutId: number | null = null;
@@ -958,7 +960,11 @@ export async function renderAndExportVideo(
         return reject(new Error('Export was cancelled by user.'));
       }
 
-      const currentTime = audioEngine.getCurrentTime();
+      // Calculate currentTime reliably using elapsed wall-clock, audio engine time, and frame step
+      const elapsed = (performance.now() - renderStartTime) / 1000;
+      const audioTime = audioEngine.getCurrentTime();
+      const frameTime = frame / fps;
+      const currentTime = Math.min(duration, Math.max(audioTime, elapsed, frameTime));
       const progress = Math.min(0.99, currentTime / duration);
 
       // Update particles
@@ -982,7 +988,7 @@ export async function renderAndExportVideo(
         status: 'rendering',
       });
 
-      if (currentTime >= duration || frame >= totalFrames) {
+      if (currentTime >= duration || elapsed >= duration || frame >= totalFrames) {
         stopRecordingCleanly();
       } else {
         requestAnimationFrame(renderLoop);

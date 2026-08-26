@@ -26,8 +26,9 @@ import {
 } from 'lucide-react';
 import { LyricItem, ProjectData } from '../types';
 import { audioEngine } from '../utils/audioEngine';
-import { formatTime, parseLyricsText, sanitizeLyricTimes, cascadeLyricTimes } from '../utils/lrcParser';
+import { formatTime, parseLyricsText, sanitizeLyricTimes, cascadeLyricTimes, parseLrcOrSrtOrTxt } from '../utils/lrcParser';
 import { GlobalTimingModal } from './GlobalTimingModal';
+import { Upload } from 'lucide-react';
 
 interface LyricsEditorProps {
   project: ProjectData;
@@ -50,6 +51,33 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({
   const [isGlobalTimingOpen, setIsGlobalTimingOpen] = useState(false);
   const [expandedTimingLineId, setExpandedTimingLineId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const lyricsFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFileDirectly = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const text = evt.target?.result as string;
+        const parsed = parseLrcOrSrtOrTxt(text);
+        if (parsed.lyrics.length > 0) {
+          setProject(p => ({
+            ...p,
+            lyrics: parsed.lyrics,
+            title: parsed.title || p.title,
+            artist: parsed.artist || p.artist,
+          }));
+          setEditorMode('interactive');
+        }
+      } catch (err) {
+        alert('Could not parse lyrics file');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   // When switching to bulk edit mode, load existing lyrics as text
   useEffect(() => {
@@ -361,6 +389,25 @@ Kundi ang taong Diyos ang pinagmulan`;
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Import File Button */}
+          <button
+            id="btn-import-lyrics-direct"
+            onClick={() => lyricsFileInputRef.current?.click()}
+            className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Import .lrc, .srt, or .txt lyrics file"
+          >
+            <Upload className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline">Import File</span>
+          </button>
+          <input
+            type="file"
+            ref={lyricsFileInputRef}
+            onChange={handleImportFileDirectly}
+            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+            accept=".lrc,.srt,.txt"
+            className="hidden"
+          />
+
           {/* Global Timing Adjuster Trigger */}
           <button
             onClick={() => setIsGlobalTimingOpen(true)}
