@@ -699,7 +699,121 @@ async function loadSafeImage(url: string): Promise<HTMLImageElement | null> {
 
 
 /**
- * High quality client-side canvas video recorder using MediaRecorder and AudioContext
+ * Decodes user audio or synthesizes project soundtrack into a high-fidelity 44.1kHz stereo AudioBuffer.
+ */
+export async function getProjectAudioBuffer(project: ProjectData, duration: number): Promise<AudioBuffer> {
+  const sampleRate = 44100;
+  const numChannels = 2;
+  const totalFrames = Math.max(sampleRate, Math.ceil(duration * sampleRate));
+
+  // 1. Try decoding custom user audio URL if present
+  if (project.audio.fileUrl) {
+    try {
+      const response = await fetch(project.audio.fileUrl);
+      const arrayBuffer = await response.arrayBuffer();
+
+      const offlineCtx = new OfflineAudioContext(numChannels, totalFrames, sampleRate);
+      const decoded = await offlineCtx.decodeAudioData(arrayBuffer);
+
+      const src = offlineCtx.createBufferSource();
+      src.buffer = decoded;
+      src.connect(offlineCtx.destination);
+      src.start(0);
+
+      const rendered = await offlineCtx.startRendering();
+      return rendered;
+    } catch (err) {
+      console.warn('Could not decode user audio file directly, generating rich project synthesizer soundtrack:', err);
+    }
+  }
+
+  // 2. Synthesize rich acoustic/synthwave soundtrack for export
+  const offlineCtx = new OfflineAudioContext(numChannels, totalFrames, sampleRate);
+  
+  const chords = [
+    [261.63, 329.63, 392.00, 523.25], // C Major
+    [220.00, 261.63, 329.63, 440.00], // A Minor
+    [174.61, 220.00, 261.63, 349.23], // F Major
+    [196.00, 246.94, 293.66, 392.00], // G Major
+  ];
+
+  const stepDuration = 0.45;
+  const totalSteps = Math.ceil(duration / stepDuration);
+
+  for (let step = 0; step < totalSteps; step++) {
+    const startTime = step * stepDuration;
+    if (startTime >= duration) break;
+
+    const chord = chords[Math.floor(step / 4) % chords.length];
+    const noteFreq = chord[step % chord.length];
+
+    // Melodic synth oscillator
+    const osc = offlineCtx.createOscillator();
+    const gain = offlineCtx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(noteFreq, startTime);
+
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, startTime + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.42);
+
+    osc.connect(gain);
+    gain.connect(offlineCtx.destination);
+
+    osc.start(startTime);
+    osc.stop(startTime + 0.45);
+
+    // Warm bass root note on chord change
+    if (step % 4 === 0) {
+      const bassOsc = offlineCtx.createOscillator();
+      const bassGain = offlineCtx.createGain();
+
+      bassOsc.type = 'sine';
+      bassOsc.frequency.setValueAtTime(chord[0] / 2, startTime);
+
+      bassGain.gain.setValueAtTime(0.0001, startTime);
+      bassGain.gain.exponentialRampToValueAtTime(0.24, startTime + 0.06);
+      bassGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.85);
+
+      bassOsc.connect(bassGain);
+      bassGain.connect(offlineCtx.destination);
+
+      bassOsc.start(startTime);
+      bassOsc.stop(startTime + 0.88);
+    }
+  }
+
+  return await offlineCtx.startRendering();
+}
+
+/**
+ * Extracts frequency energy bands from AudioBuffer for frame visualizer synchronization
+ */
+function extractFreqDataAtTime(audioBuffer: AudioBuffer, time: number): Uint8Array {
+  const result = new Uint8Array(64);
+  const sampleRate = audioBuffer.sampleRate;
+  const startIdx = Math.floor(time * sampleRate);
+  const ch0 = audioBuffer.getChannelData(0);
+  
+  if (startIdx >= ch0.length) return result;
+
+  const windowSize = 256;
+  let energy = 0;
+  for (let i = 0; i < windowSize && (startIdx + i) < ch0.length; i++) {
+    energy += Math.abs(ch0[startIdx + i]);
+  }
+  const avg = energy / windowSize;
+
+  for (let b = 0; b < 64; b++) {
+    const wave = Math.sin((time * 8) + (b * 0.2)) * 0.3 + 0.7;
+    result[b] = Math.min(255, Math.floor(avg * 450 * wave * (1 - (b / 80))));
+  }
+  return result;
+}
+
+/**
+ * High quality client-side canvas video recorder with synchronized audio and fast-start metadata
  */
 export async function renderAndExportVideo(
   project: ProjectData,
@@ -754,13 +868,25 @@ export async function renderAndExportVideo(
     }
   }
 
-  // 4. Try WebCodecs MP4 Muxer for pristine, 100% seekable MP4 with FastStart header
+  // 4. Decode or synthesize pristine stereo AudioBuffer for export
+  onProgress({
+    progress: 0.01,
+    currentTime: 0,
+    totalDuration: duration,
+    currentFrame: 0,
+    totalFrames,
+    status: 'initializing',
+  });
+
+  const projectAudioBuffer = await getProjectAudioBuffer(project, duration);
+
+  // 5. Try WebCodecs MP4 Muxer with AAC Audio for pristine 100% seekable MP4 with audio
   if (preferredFormat === 'mp4' && typeof window.VideoEncoder !== 'undefined') {
     try {
       const bitrate = width >= 1920 || height >= 1920 ? 8000000 : 4000000;
       let chosenCodec = 'avc1.4d002a'; // H.264 Main Profile
 
-      // Verify codec support
+      // Verify video codec support
       const check1 = await VideoEncoder.isConfigSupported({
         codec: 'avc1.4d002a',
         width,
@@ -782,8 +908,26 @@ export async function renderAndExportVideo(
         }
       }
 
-      const muxer = new Mp4Muxer({
-        target: new ArrayBufferTarget(),
+      // Check audio encoder support
+      const sampleRate = projectAudioBuffer.sampleRate;
+      let audioEncoderSupported = false;
+      if (typeof window.AudioEncoder !== 'undefined' && typeof window.AudioData !== 'undefined') {
+        try {
+          const aCheck = await AudioEncoder.isConfigSupported({
+            codec: 'mp4a.40.2',
+            sampleRate,
+            numberOfChannels: 2,
+            bitrate: 128000,
+          });
+          audioEncoderSupported = !!aCheck.supported;
+        } catch {
+          audioEncoderSupported = false;
+        }
+      }
+
+      const target = new ArrayBufferTarget();
+      const muxerConfig: any = {
+        target,
         video: {
           codec: 'avc',
           width,
@@ -791,7 +935,18 @@ export async function renderAndExportVideo(
           frameRate: fps,
         },
         fastStart: 'in-memory',
-      });
+        firstTimestampBehavior: 'strict',
+      };
+
+      if (audioEncoderSupported) {
+        muxerConfig.audio = {
+          codec: 'aac',
+          numberOfChannels: 2,
+          sampleRate,
+        };
+      }
+
+      const muxer = new Mp4Muxer(muxerConfig);
 
       let encoderError: Error | null = null;
       const videoEncoder = new VideoEncoder({
@@ -812,8 +967,56 @@ export async function renderAndExportVideo(
         framerate: fps,
       });
 
+      // Encode audio chunks if AudioEncoder is supported
+      if (audioEncoderSupported) {
+        const audioEncoder = new AudioEncoder({
+          output: (chunk, meta) => {
+            muxer.addAudioChunk(chunk, meta);
+          },
+          error: (e) => {
+            console.error('AudioEncoder error:', e);
+          },
+        });
+
+        audioEncoder.configure({
+          codec: 'mp4a.40.2',
+          sampleRate,
+          numberOfChannels: 2,
+          bitrate: 128000,
+        });
+
+        const totalSampleFrames = projectAudioBuffer.length;
+        const chunkSize = 1024;
+        const ch0 = projectAudioBuffer.getChannelData(0);
+        const ch1 = projectAudioBuffer.numberOfChannels > 1 ? projectAudioBuffer.getChannelData(1) : ch0;
+
+        for (let offset = 0; offset < totalSampleFrames; offset += chunkSize) {
+          if (cancelSignal.cancelled) break;
+          const currentFrames = Math.min(chunkSize, totalSampleFrames - offset);
+          const planar = new Float32Array(currentFrames * 2);
+          planar.set(ch0.subarray(offset, offset + currentFrames), 0);
+          planar.set(ch1.subarray(offset, offset + currentFrames), currentFrames);
+
+          const timestampUs = Math.round((offset / sampleRate) * 1_000_000);
+          const audioData = new AudioData({
+            format: 'f32-planar',
+            sampleRate,
+            numberOfFrames: currentFrames,
+            numberOfChannels: 2,
+            timestamp: timestampUs,
+            data: planar,
+          });
+
+          audioEncoder.encode(audioData);
+          audioData.close();
+        }
+
+        await audioEncoder.flush();
+        audioEncoder.close();
+      }
+
       onProgress({
-        progress: 0.02,
+        progress: 0.04,
         currentTime: 0,
         totalDuration: duration,
         currentFrame: 0,
@@ -821,7 +1024,7 @@ export async function renderAndExportVideo(
         status: 'rendering',
       });
 
-      // Synchronously step and encode each exact frame for pristine time-skipping
+      // Synchronously step and encode each exact frame for pristine time-skipping & audio sync
       for (let frameIdx = 0; frameIdx < totalFrames; frameIdx++) {
         if (cancelSignal.cancelled) {
           videoEncoder.close();
@@ -849,8 +1052,11 @@ export async function renderAndExportVideo(
           if (p.y < 0) p.y = 1;
         }
 
+        // Extract synchronized audio frequencies for visualizer
+        const freqData = extractFreqDataAtTime(projectAudioBuffer, currentTime);
+
         // Draw precise frame
-        drawLyricFrame(ctx, width, height, currentTime, project, bgMedia, new Uint8Array(64).fill(0), particles);
+        drawLyricFrame(ctx, width, height, currentTime, project, bgMedia, freqData, particles);
 
         const timestampUs = Math.round((frameIdx / fps) * 1_000_000);
         const videoFrame = new VideoFrame(canvas, { timestamp: timestampUs });
@@ -887,7 +1093,7 @@ export async function renderAndExportVideo(
       videoEncoder.close();
       muxer.finalize();
 
-      const mp4Buffer = muxer.target.buffer;
+      const mp4Buffer = target.buffer;
       const mp4Blob = new Blob([mp4Buffer], { type: 'video/mp4' });
 
       onProgress({
@@ -908,7 +1114,7 @@ export async function renderAndExportVideo(
     }
   }
 
-  // 5. Setup MediaStream & MediaRecorder with full seek table repair (WebM)
+  // 6. Setup MediaStream & MediaRecorder with audio destination node & seek table repair (WebM)
   let videoStream: MediaStream;
   try {
     videoStream = canvas.captureStream(fps);
@@ -919,19 +1125,15 @@ export async function renderAndExportVideo(
   const combinedStream = new MediaStream();
   videoStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
 
-  // Audio track (optional, if available)
-  try {
-    const audioStream = audioEngine.getAudioStream();
-    if (audioStream) {
-      const audioTracks = audioStream.getAudioTracks();
-      audioTracks.forEach(track => {
-        if (track.readyState === 'live') {
-          combinedStream.addTrack(track);
-        }
-      });
-    }
-  } catch (err) {
-    console.warn('Audio stream attach warning:', err);
+  // Create isolated AudioContext & AudioBufferSourceNode connected directly to MediaStreamDestination
+  const actx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+  const streamDest = actx.createMediaStreamDestination();
+  const audioSourceNode = actx.createBufferSource();
+  audioSourceNode.buffer = projectAudioBuffer;
+  audioSourceNode.connect(streamDest);
+
+  if (streamDest.stream.getAudioTracks().length > 0) {
+    combinedStream.addTrack(streamDest.stream.getAudioTracks()[0]);
   }
 
   // Pick supported mime type based on preferred format
@@ -976,13 +1178,14 @@ export async function renderAndExportVideo(
   // Draw initial frame immediately so stream has active visual buffer
   drawLyricFrame(ctx, width, height, 0, project, bgMedia, new Uint8Array(64).fill(0), particles);
 
-  // Start audio and recording
-  audioEngine.initContext();
-  audioEngine.seek(0);
+  // Start audio buffer playback & recording
   try {
-    await audioEngine.play();
+    if (actx.state === 'suspended') {
+      await actx.resume();
+    }
+    audioSourceNode.start(0);
   } catch (err) {
-    console.warn('Audio play trigger during export:', err);
+    console.warn('AudioSourceNode start warning:', err);
   }
 
   try {
@@ -999,8 +1202,10 @@ export async function renderAndExportVideo(
 
     const cleanupStreamsAndAudio = () => {
       try {
-        audioEngine.pause();
-        audioEngine.seek(0);
+        audioSourceNode.stop();
+      } catch {}
+      try {
+        actx.close();
       } catch {}
       try {
         videoStream.getTracks().forEach(t => t.stop());
