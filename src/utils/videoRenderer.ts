@@ -1,5 +1,7 @@
 import { ProjectData, LyricItem } from '../types';
 import { audioEngine } from './audioEngine';
+import { Muxer as Mp4Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import fixWebmDuration from 'webm-duration-fix';
 
 export interface RenderProgress {
   progress: number; // 0 to 1
@@ -695,86 +697,6 @@ async function loadSafeImage(url: string): Promise<HTMLImageElement | null> {
   });
 }
 
-/**
- * Injects EBML Duration metadata into a WebM Blob so that video players
- * (VLC, Chrome, QuickTime, Windows Media Player) recognize the full video duration
- * and allow seeking instead of freezing at 0:00 or hanging.
- */
-async function fixWebmDuration(blob: Blob, durationMs: number): Promise<Blob> {
-  try {
-    const buffer = await blob.arrayBuffer();
-    const view = new DataView(buffer);
-    const bytes = new Uint8Array(buffer);
-
-    // Search for EBML Segment Info tag [0x15, 0x49, 0xA9, 0x66]
-    let segmentInfoOffset = -1;
-    for (let i = 0; i < Math.min(bytes.length - 4, 1024 * 32); i++) {
-      if (
-        bytes[i] === 0x15 &&
-        bytes[i + 1] === 0x49 &&
-        bytes[i + 2] === 0xa9 &&
-        bytes[i + 3] === 0x66
-      ) {
-        segmentInfoOffset = i;
-        break;
-      }
-    }
-
-    if (segmentInfoOffset === -1) {
-      return blob;
-    }
-
-    // Search for Duration tag [0x44, 0x89] inside Segment Info
-    let durationOffset = -1;
-    const searchLimit = Math.min(bytes.length - 10, segmentInfoOffset + 1024);
-
-    for (let i = segmentInfoOffset + 4; i < searchLimit; i++) {
-      if (bytes[i] === 0x44 && bytes[i + 1] === 0x89) {
-        durationOffset = i;
-        break;
-      }
-    }
-
-    if (durationOffset !== -1) {
-      const sizeByte = bytes[durationOffset + 2];
-      if (sizeByte === 0x84) {
-        view.setFloat32(durationOffset + 3, durationMs, false);
-        return new Blob([buffer], { type: blob.type || 'video/webm' });
-      } else if (sizeByte === 0x88) {
-        view.setFloat64(durationOffset + 3, durationMs, false);
-        return new Blob([buffer], { type: blob.type || 'video/webm' });
-      }
-    }
-
-    // If duration tag is not present, insert it into Segment Info
-    let offset = segmentInfoOffset + 4;
-    let firstByte = bytes[offset];
-    let numBytes = 1;
-    let mask = 0x80;
-    while (mask > 0 && (firstByte & mask) === 0) {
-      numBytes++;
-      mask >>= 1;
-    }
-    const infoDataOffset = offset + numBytes;
-
-    const durationTag = new Uint8Array(11);
-    durationTag[0] = 0x44;
-    durationTag[1] = 0x89;
-    durationTag[2] = 0x88;
-    const durView = new DataView(durationTag.buffer);
-    durView.setFloat64(3, durationMs, false);
-
-    const newBytes = new Uint8Array(bytes.length + 11);
-    newBytes.set(bytes.subarray(0, infoDataOffset), 0);
-    newBytes.set(durationTag, infoDataOffset);
-    newBytes.set(bytes.subarray(infoDataOffset), infoDataOffset + 11);
-
-    return new Blob([newBytes.buffer], { type: blob.type || 'video/webm' });
-  } catch (err) {
-    console.warn('fixWebmDuration fallback warning:', err);
-    return blob;
-  }
-}
 
 /**
  * High quality client-side canvas video recorder using MediaRecorder and AudioContext
@@ -801,10 +723,14 @@ export async function renderAndExportVideo(
   const fps = 30;
   const totalFrames = Math.ceil(duration * fps);
 
+  // Even dimensions required for H.264 / AVC video codecs
+  const width = Math.floor(canvasWidth / 2) * 2;
+  const height = Math.floor(canvasHeight / 2) * 2;
+
   // 1. Create off-screen rendering canvas
   const canvas = document.createElement('canvas');
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) throw new Error('Failed to get 2D canvas context for rendering.');
 
@@ -828,7 +754,161 @@ export async function renderAndExportVideo(
     }
   }
 
-  // 4. Setup MediaStream & MediaRecorder
+  // 4. Try WebCodecs MP4 Muxer for pristine, 100% seekable MP4 with FastStart header
+  if (preferredFormat === 'mp4' && typeof window.VideoEncoder !== 'undefined') {
+    try {
+      const bitrate = width >= 1920 || height >= 1920 ? 8000000 : 4000000;
+      let chosenCodec = 'avc1.4d002a'; // H.264 Main Profile
+
+      // Verify codec support
+      const check1 = await VideoEncoder.isConfigSupported({
+        codec: 'avc1.4d002a',
+        width,
+        height,
+        bitrate,
+        framerate: fps,
+      });
+
+      if (!check1.supported) {
+        const check2 = await VideoEncoder.isConfigSupported({
+          codec: 'avc1.42001f', // H.264 Baseline Profile
+          width,
+          height,
+          bitrate,
+          framerate: fps,
+        });
+        if (check2.supported) {
+          chosenCodec = 'avc1.42001f';
+        }
+      }
+
+      const muxer = new Mp4Muxer({
+        target: new ArrayBufferTarget(),
+        video: {
+          codec: 'avc',
+          width,
+          height,
+          frameRate: fps,
+        },
+        fastStart: 'in-memory',
+      });
+
+      let encoderError: Error | null = null;
+      const videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => {
+          muxer.addVideoChunk(chunk, meta);
+        },
+        error: (e) => {
+          console.error('VideoEncoder error:', e);
+          encoderError = e;
+        },
+      });
+
+      videoEncoder.configure({
+        codec: chosenCodec,
+        width,
+        height,
+        bitrate,
+        framerate: fps,
+      });
+
+      onProgress({
+        progress: 0.02,
+        currentTime: 0,
+        totalDuration: duration,
+        currentFrame: 0,
+        totalFrames,
+        status: 'rendering',
+      });
+
+      // Synchronously step and encode each exact frame for pristine time-skipping
+      for (let frameIdx = 0; frameIdx < totalFrames; frameIdx++) {
+        if (cancelSignal.cancelled) {
+          videoEncoder.close();
+          onProgress({
+            progress: 0,
+            currentTime: 0,
+            totalDuration: duration,
+            currentFrame: frameIdx,
+            totalFrames,
+            status: 'cancelled',
+          });
+          throw new Error('Export was cancelled by user.');
+        }
+
+        if (encoderError) {
+          throw encoderError;
+        }
+
+        const currentTime = (frameIdx / fps);
+        const progress = Math.min(0.95, (frameIdx + 1) / totalFrames);
+
+        // Update particles
+        for (const p of particles) {
+          p.y -= p.speedY;
+          if (p.y < 0) p.y = 1;
+        }
+
+        // Draw precise frame
+        drawLyricFrame(ctx, width, height, currentTime, project, bgMedia, new Uint8Array(64).fill(0), particles);
+
+        const timestampUs = Math.round((frameIdx / fps) * 1_000_000);
+        const videoFrame = new VideoFrame(canvas, { timestamp: timestampUs });
+
+        // Keyframe every 2 seconds for high-precision timeline scrubbing
+        const isKeyFrame = frameIdx % (fps * 2) === 0;
+        videoEncoder.encode(videoFrame, { keyFrame: isKeyFrame });
+        videoFrame.close();
+
+        // Periodically yield to UI thread so progress updates smoothly
+        if (frameIdx % 6 === 0 || frameIdx === totalFrames - 1) {
+          onProgress({
+            progress,
+            currentTime,
+            totalDuration: duration,
+            currentFrame: frameIdx + 1,
+            totalFrames,
+            status: 'rendering',
+          });
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+
+      onProgress({
+        progress: 0.96,
+        currentTime: duration,
+        totalDuration: duration,
+        currentFrame: totalFrames,
+        totalFrames,
+        status: 'encoding',
+      });
+
+      await videoEncoder.flush();
+      videoEncoder.close();
+      muxer.finalize();
+
+      const mp4Buffer = muxer.target.buffer;
+      const mp4Blob = new Blob([mp4Buffer], { type: 'video/mp4' });
+
+      onProgress({
+        progress: 1.0,
+        currentTime: duration,
+        totalDuration: duration,
+        currentFrame: totalFrames,
+        totalFrames,
+        status: 'completed',
+      });
+
+      return mp4Blob;
+    } catch (err: any) {
+      if (cancelSignal.cancelled) {
+        throw new Error('Export was cancelled by user.');
+      }
+      console.warn('WebCodecs MP4 muxer failed, falling back to MediaRecorder WebM pipeline:', err);
+    }
+  }
+
+  // 5. Setup MediaStream & MediaRecorder with full seek table repair (WebM)
   let videoStream: MediaStream;
   try {
     videoStream = canvas.captureStream(fps);
@@ -855,28 +935,13 @@ export async function renderAndExportVideo(
   }
 
   // Pick supported mime type based on preferred format
-  const candidateMimes = preferredFormat === 'mp4'
-    ? [
-        'video/mp4;codecs=avc1,mp4a.40.2',
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs=h264,aac',
-        'video/mp4;codecs=avc1',
-        'video/mp4',
-        'video/webm;codecs=h264,opus',
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm',
-        '',
-      ]
-    : [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=h264,opus',
-        'video/webm',
-        'video/mp4;codecs=avc1,mp4a.40.2',
-        'video/mp4',
-        '',
-      ];
+  const candidateMimes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=h264,opus',
+    'video/webm',
+    '',
+  ];
 
   let chosenMime = '';
   for (const m of candidateMimes) {
@@ -886,7 +951,7 @@ export async function renderAndExportVideo(
     }
   }
 
-  const bitrate = canvasWidth >= 1920 || canvasHeight >= 1920 ? 8000000 : 4000000;
+  const bitrate = width >= 1920 || height >= 1920 ? 8000000 : 4000000;
   
   let recorder: MediaRecorder;
   try {
@@ -908,10 +973,10 @@ export async function renderAndExportVideo(
     }
   };
 
-  // 5. Draw initial frame immediately so stream has active visual buffer
-  drawLyricFrame(ctx, canvasWidth, canvasHeight, 0, project, bgMedia, new Uint8Array(64).fill(0), particles);
+  // Draw initial frame immediately so stream has active visual buffer
+  drawLyricFrame(ctx, width, height, 0, project, bgMedia, new Uint8Array(64).fill(0), particles);
 
-  // 6. Start audio and recording
+  // Start audio and recording
   audioEngine.initContext();
   audioEngine.seek(0);
   try {
@@ -938,7 +1003,6 @@ export async function renderAndExportVideo(
         audioEngine.seek(0);
       } catch {}
       try {
-        // Only stop video track from canvas, preserve audio destination node
         videoStream.getTracks().forEach(t => t.stop());
       } catch {}
     };
@@ -959,15 +1023,15 @@ export async function renderAndExportVideo(
       }
 
       const mime = recorder.mimeType || chosenMime || 'video/webm';
-      let finalBlob = new Blob(chunks, { type: mime });
+      const rawBlob = new Blob(chunks, { type: mime });
+      let finalBlob = rawBlob;
 
-      // If WebM, inject EBML duration metadata so video players don't hang
-      if (mime.includes('webm')) {
-        try {
-          finalBlob = await fixWebmDuration(finalBlob, duration * 1000);
-        } catch (e) {
-          console.warn('WebM duration patch skipped:', e);
-        }
+      // Reconstruct EBML Cues Seek Table and Duration using ts-ebml fixer
+      try {
+        finalBlob = await fixWebmDuration(rawBlob);
+      } catch (e) {
+        console.warn('fixWebmDuration fallback warning:', e);
+        finalBlob = rawBlob;
       }
 
       onProgress({
@@ -1049,7 +1113,6 @@ export async function renderAndExportVideo(
       // Calculate currentTime reliably using elapsed wall-clock and audio engine time
       const elapsed = (performance.now() - renderStartTime) / 1000;
       const audioTime = audioEngine.getCurrentTime();
-      // Match StagePreview playback time precisely
       const currentTime = Math.min(duration, Math.max(0, audioTime > 0.02 ? audioTime : elapsed));
       const progress = Math.min(0.99, currentTime / duration);
 
@@ -1062,7 +1125,7 @@ export async function renderAndExportVideo(
       const freqData = audioEngine.getFrequencyData();
 
       // Render Frame
-      drawLyricFrame(ctx, canvasWidth, canvasHeight, currentTime, project, bgMedia, freqData, particles);
+      drawLyricFrame(ctx, width, height, currentTime, project, bgMedia, freqData, particles);
 
       frame++;
       onProgress({
@@ -1082,6 +1145,6 @@ export async function renderAndExportVideo(
       }
     };
 
-    requestAnimationFrame(renderLoop);
+    renderLoop();
   });
 }
